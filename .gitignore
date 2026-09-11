@@ -1,0 +1,21 @@
+.DS_Store
+.pio/
+.vscode/
+.idea/
+
+# PlatformIO / embedded build outputs
+*.elf
+*.map
+*.bin
+*.hex
+*.uf2
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# OS/editor noise
+Thumbs.db
+*.swp
+*.swo

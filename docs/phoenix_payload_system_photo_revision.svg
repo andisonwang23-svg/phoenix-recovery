@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080">
+  <defs>
+    <linearGradient id="tube" x1="0" x2="1"><stop offset="0" stop-color="#e2e8f0"/><stop offset="0.12" stop-color="#fff"/><stop offset="0.88" stop-color="#fff"/><stop offset="1" stop-color="#cbd5e1"/></linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0 0L10 3L0 6Z" fill="#334155"/></marker>
+    <marker id="redarrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0 0L10 3L0 6Z" fill="#dc2626"/></marker>
+    <style>
+      .title{font:700 36px Arial,sans-serif;fill:#0f172a}.sub{font:18px Arial,sans-serif;fill:#475569}.h{font:700 20px Arial,sans-serif;fill:#0f172a}.t{font:16px Arial,sans-serif;fill:#334155}.sm{font:14px Arial,sans-serif;fill:#475569}.box{fill:#fff;stroke:#94a3b8;stroke-width:2}.lead{fill:none;stroke:#334155;stroke-width:2;marker-end:url(#arrow)}.load{fill:none;stroke:#dc2626;stroke-width:6;marker-end:url(#redarrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="1080" fill="#f8fafc"/>
+  <text x="800" y="55" text-anchor="middle" class="title">Phoenix Recovery — Photo-Based Payload Cartridge</text>
+  <text x="800" y="86" text-anchor="middle" class="sub">Proposed rebuild using the long white sled, circular end plates, electronics, servos and blue parafoil shown in your photos</text>
+
+  <!-- nose and payload tube cutaway -->
+  <path d="M570 125 Q800 55 1030 125L1030 225H570Z" fill="#dbeafe" stroke="#1e3a8a" stroke-width="4"/>
+  <path d="M570 225H1030V940H570Z" fill="url(#tube)" stroke="#334155" stroke-width="6"/>
+  <path d="M590 225H1010" stroke="#0f766e" stroke-width="10"/>
+  <text x="800" y="148" text-anchor="middle" class="h">Nose / deployment volume</text>
+
+  <!-- parafoil pack -->
+  <path d="M655 165Q800 120 945 165L915 213Q800 184 685 213Z" fill="#60a5fa" stroke="#1d4ed8" stroke-width="3"/>
+  <path d="M690 176Q800 145 910 176M720 190Q800 168 880 190" fill="none" stroke="#dbeafe" stroke-width="5"/>
+  <text x="800" y="174" text-anchor="middle" class="t">Blue parafoil, folded in deployment sleeve</text>
+
+  <!-- removable cartridge -->
+  <ellipse cx="800" cy="260" rx="192" ry="30" fill="#f1f5f9" stroke="#2563eb" stroke-width="5"/>
+  <rect x="648" y="260" width="304" height="590" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="4"/>
+  <rect x="675" y="272" width="22" height="565" fill="#fff" stroke="#64748b" stroke-width="3"/>
+  <rect x="903" y="272" width="22" height="565" fill="#fff" stroke="#64748b" stroke-width="3"/>
+  <ellipse cx="800" cy="850" rx="192" ry="30" fill="#f1f5f9" stroke="#2563eb" stroke-width="5"/>
+  <text x="800" y="298" text-anchor="middle" class="h">Existing dual-rail sled</text>
+
+  <!-- structural harness -->
+  <circle cx="800" cy="250" r="15" fill="#fecaca" stroke="#991b1b" stroke-width="4"/>
+  <path d="M800 250C800 210 800 190 800 165" class="load"/>
+  <path d="M800 250L760 835M800 250L840 835" fill="none" stroke="#dc2626" stroke-width="4" stroke-dasharray="10 8"/>
+
+  <!-- line channels -->
+  <path d="M718 202C690 250 706 345 712 430C718 500 714 560 724 620" fill="none" stroke="#0f766e" stroke-width="7"/>
+  <path d="M882 202C910 250 894 345 888 430C882 500 886 560 876 620" fill="none" stroke="#0f766e" stroke-width="7"/>
+  <path d="M718 215V610M882 215V610" fill="none" stroke="#99f6e4" stroke-width="17" opacity=".55"/>
+
+  <!-- servo bay -->
+  <rect x="730" y="575" width="140" height="90" rx="12" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"/>
+  <rect x="744" y="592" width="48" height="52" rx="5" fill="#c4b5fd" stroke="#5b21b6" stroke-width="2"/>
+  <rect x="808" y="592" width="48" height="52" rx="5" fill="#c4b5fd" stroke="#5b21b6" stroke-width="2"/>
+  <text x="800" y="690" text-anchor="middle" class="t">Rigid two-servo bracket</text>
+
+  <!-- electronics enclosure -->
+  <rect x="720" y="330" width="160" height="205" rx="14" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+  <rect x="740" y="360" width="120" height="60" rx="7" fill="#86efac" stroke="#166534" stroke-width="2"/>
+  <rect x="740" y="440" width="120" height="62" rx="7" fill="#86efac" stroke="#166534" stroke-width="2"/>
+  <text x="800" y="352" text-anchor="middle" class="t">Vented protective cover</text>
+  <text x="800" y="395" text-anchor="middle" class="sm">Controller / sensors</text>
+  <text x="800" y="475" text-anchor="middle" class="sm">GPS / radio</text>
+
+  <!-- battery -->
+  <rect x="720" y="718" width="160" height="95" rx="14" fill="#fef3c7" stroke="#d97706" stroke-width="3"/>
+  <path d="M710 742L890 790M710 790L890 742" stroke="#b45309" stroke-width="10" opacity=".65"/>
+  <rect x="708" y="707" width="184" height="116" rx="18" fill="none" stroke="#92400e" stroke-width="3" stroke-dasharray="8 6"/>
+  <text x="800" y="756" text-anchor="middle" class="h">1S LiPo</text>
+  <text x="800" y="780" text-anchor="middle" class="sm">cradle + strap + hard end stops</text>
+
+  <!-- retention -->
+  <circle cx="610" cy="850" r="7" fill="#0f172a"/><circle cx="990" cy="850" r="7" fill="#0f172a"/>
+  <path d="M565 850H625M975 850H1035" stroke="#0f172a" stroke-width="4"/>
+
+  <!-- removable cartridge extraction hardware -->
+  <path d="M755 858V899Q755 923 779 923H821Q845 923 845 899V858" fill="none" stroke="#475569" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="755" cy="858" r="10" fill="#cbd5e1" stroke="#334155" stroke-width="3"/>
+  <circle cx="845" cy="858" r="10" fill="#cbd5e1" stroke="#334155" stroke-width="3"/>
+  <text x="800" y="944" text-anchor="middle" class="sm">Folding pull handle on aft plate</text>
+
+  <!-- captive pin detail -->
+  <path d="M590 831V870M1010 831V870" stroke="#dc2626" stroke-width="5"/>
+  <circle cx="590" cy="825" r="9" fill="#fecaca" stroke="#991b1b" stroke-width="3"/>
+  <circle cx="1010" cy="825" r="9" fill="#fecaca" stroke="#991b1b" stroke-width="3"/>
+
+  <!-- left callouts -->
+  <rect x="40" y="135" width="420" height="118" rx="12" class="box"/>
+  <text x="62" y="170" class="h">1. Pack and deploy upward</text><text x="62" y="200" class="t">Use a smooth deployment sleeve; nothing crosses</text><text x="62" y="226" class="t">the tube rim or wraps around the electronics.</text>
+  <path d="M460 205C520 205 560 190 680 185" class="lead"/>
+
+  <rect x="40" y="335" width="420" height="138" rx="12" class="box"/>
+  <text x="62" y="370" class="h">2. Separate lines from wires</text><text x="62" y="400" class="t">Route left and right brake lines through smooth,</text><text x="62" y="426" class="t">covered channels. Bundle and strain-relieve every</text><text x="62" y="452" class="t">electrical lead inside the center enclosure.</text>
+  <path d="M460 405C530 405 600 420 710 425" class="lead"/>
+
+  <rect x="40" y="565" width="420" height="140" rx="12" class="box"/>
+  <text x="62" y="600" class="h">3. Mount—not hang—components</text><text x="62" y="630" class="t">Screw boards to standoffs and servos to brackets.</text><text x="62" y="656" class="t">The battery needs a fitted cradle, strap and hard</text><text x="62" y="682" class="t">end stops; foam alone is not a restraint.</text>
+  <path d="M460 635C540 635 625 650 730 625" class="lead"/>
+
+  <!-- right callouts -->
+  <rect x="1140" y="135" width="420" height="140" rx="12" class="box"/>
+  <text x="1162" y="170" class="h">4. Structural load bypass</text><text x="1162" y="200" class="t">Connect the recovery harness to a rated eye and</text><text x="1162" y="226" class="t">bulkhead. The load must bypass the boards, battery,</text><text x="1162" y="252" class="t">servo wires and 3D-printed electronics cover.</text>
+  <path d="M1140 215C1085 215 1010 230 817 251" class="lead"/>
+
+  <rect x="1140" y="365" width="420" height="138" rx="12" class="box"/>
+  <text x="1162" y="400" class="h">5. Protect the hardware</text><text x="1162" y="430" class="t">Add a lightweight removable cover over the boards.</text><text x="1162" y="456" class="t">Round every line-contact edge and keep ventilation</text><text x="1162" y="482" class="t">open for the barometer and electronics.</text>
+  <path d="M1140 435C1050 435 980 435 880 435" class="lead"/>
+
+  <rect x="1140" y="615" width="420" height="166" rx="12" class="box"/>
+  <text x="1162" y="650" class="h">6. Lock and remove the cartridge</text><text x="1162" y="680" class="t">Two captive pins prevent fore-aft movement in flight.</text><text x="1162" y="706" class="t">After opening the payload bay: unplug the keyed</text><text x="1162" y="732" class="t">connector, pull both pins, unfold the aft handle,</text><text x="1162" y="758" class="t">and slide the complete cartridge straight out.</text>
+  <path d="M1140 700C1060 700 1040 810 1010 825" class="lead"/>
+  <path d="M1140 754C1040 820 950 910 846 911" class="lead"/>
+
+  <!-- build order -->
+  <rect x="105" y="965" width="1390" height="82" rx="14" fill="#fff7ed" stroke="#ea580c" stroke-width="3"/>
+  <text x="800" y="993" text-anchor="middle" class="h">Build order</text>
+  <text x="800" y="1020" text-anchor="middle" class="t">Measure tube ID → fit end plates → install captive pins and folding handle → add restraints and line guides → shake/pull test → repeatable removal test → inert deployment test</text>
+  <text x="800" y="1041" text-anchor="middle" class="sm">Never extract the cartridge by its wires, parafoil lines or recovery harness. Use the handle only after the rocket is safe and opened.</text>
+</svg>

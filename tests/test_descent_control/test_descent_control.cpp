@@ -1,0 +1,29 @@
+#include <unity.h>
+#include <cmath>
+#include "logic/state_machine.h"
+#include "logic/guidance_logic.h"
+#include "logic/data_quality.h"
+#include "../../firmware/src/logic/guidance_logic.cpp"
+#include "../../firmware/src/logic/state_machine.cpp"
+using namespace logic;
+static GuidanceConfig gc(){GuidanceConfig c;c.kp=.02f;c.max_steering=.8f;c.cmd_rate_limit_per_s=.5f;c.reversal_guard_ms=1200;c.min_guidance_altitude_m=10;c.target_accept_radius_m=5;return c;}
+static GuidanceInput gi(float course=0){GuidanceInput i;i.current_lat=41;i.current_lon=-87;i.target_lat=41.001;i.target_lon=-87;i.altitude_agl_m=200;i.ground_speed_mps=8;i.gps_course_deg=course;i.gps_valid=true;i.imu_valid=true;i.baro_valid=true;i.mode=GuidanceMode::HEADING_TO_TARGET;i.dt_s=.1f;i.now_ms=1000;return i;}
+static GuidanceOutput run(GuidanceInput i,GuidanceConfig c=gc()){RateLimiter r(c.cmd_rate_limit_per_s);r.reset();ReversalGuard g(c.reversal_guard_ms);return computeGuidance(i,c,r,g);}
+void neutral_without_gps(){auto i=gi();i.gps_valid=false;TEST_ASSERT_FALSE(run(i).guidance_active);TEST_ASSERT_FLOAT_WITHIN(.001,0,run(i).steering_command);}
+void left_and_right_turns(){auto l=gi(90);auto r=gi(270);TEST_ASSERT_TRUE(run(l).steering_command<0.0f);TEST_ASSERT_TRUE(run(r).steering_command>0.0f);}
+void heading_wrap(){auto i=gi(350);i.target_lat=41.001;i.target_lon=-86.99982;auto o=run(i);TEST_ASSERT_TRUE(o.heading_error_deg>-180&&o.heading_error_deg<=180);}
+void low_speed_reduces_authority(){auto i=gi(180);i.ground_speed_mps=.3f;auto o=run(i);TEST_ASSERT_LESS_OR_EQUAL(.351f,std::fabs(o.steering_command));TEST_ASSERT_FALSE(o.course_reliable);}
+void oscillation_neutral(){auto i=gi(180);i.angular_rate_dps=80;TEST_ASSERT_FLOAT_WITHIN(.001,0,run(i).steering_command);}
+void imu_failure_reduces_authority(){auto i=gi(180);i.imu_valid=false;TEST_ASSERT_LESS_OR_EQUAL(.351f,std::fabs(run(i).steering_command));}
+void unreachable_reduces_authority(){auto i=gi(180);i.altitude_agl_m=20;i.target_lat=41.01;auto o=run(i);TEST_ASSERT_FALSE(o.target_reachable);TEST_ASSERT_LESS_OR_EQUAL(.351f,std::fabs(o.steering_command));}
+void close_target_neutral(){auto i=gi();i.target_lat=i.current_lat;i.target_lon=i.current_lon;TEST_ASSERT_FALSE(run(i).guidance_active);}
+void gps_jump_rejected(){GPSQualityConfig c;c.min_satellites=4;GPSData a,b;a.valid=b.valid=true;a.lat=41;a.lon=-87;b=a;b.lat=41.01;a.satellites=b.satellites=8;a.hdop=b.hdop=1;TEST_ASSERT_FALSE(validateGPS(b,a,c));}
+void nan_rejected(){GPSQualityConfig c;GPSData a,b;b.valid=true;b.lat=NAN;b.satellites=8;b.hdop=1;TEST_ASSERT_FALSE(validateGPS(b,a,c));}
+void baro_spike_rejected(){BaroQualityConfig c;BaroData a,b;a.valid=b.valid=true;a.pressure_hpa=b.pressure_hpa=1000;a.altitude_m=10;b.altitude_m=100;TEST_ASSERT_FALSE(validateBaro(b,a,c));}
+void deployment_and_stabilization(){StateMachineContext c;c.now_ms=1000;c.baro_valid=c.imu_valid=c.gps_valid=true;c.vertical_speed_mps=-5;c.angular_rate_dps=2;StateMachineRuntime r;r.enter(1000);auto a=updateStateMachine(c,r,FlightState::APOGEE_CONFIRMED,FailCode::FAIL_NONE);TEST_ASSERT_EQUAL((int)FlightState::DEPLOYMENT_WAIT,(int)a.new_state);c.now_ms=2600;a=updateStateMachine(c,r,a.new_state,FailCode::FAIL_NONE);TEST_ASSERT_EQUAL((int)FlightState::PARAFOIL_STABILIZATION,(int)a.new_state);c.now_ms=2700;a=updateStateMachine(c,r,a.new_state,FailCode::FAIL_NONE);c.now_ms=5701;a=updateStateMachine(c,r,a.new_state,FailCode::FAIL_NONE);TEST_ASSERT_EQUAL((int)FlightState::GUIDED_DESCENT,(int)a.new_state);}
+void unstable_times_out(){StateMachineContext c;c.now_ms=1;c.baro_valid=c.imu_valid=true;c.vertical_speed_mps=-5;c.angular_rate_dps=100;c.max_stabilization_time_ms=1000;StateMachineRuntime r;r.enter(1);c.now_ms=1002;auto a=updateStateMachine(c,r,FlightState::PARAFOIL_STABILIZATION,FailCode::FAIL_NONE);TEST_ASSERT_EQUAL((int)FlightState::FAILSAFE_DESCENT,(int)a.new_state);}
+void gps_timeout_failsafe(){StateMachineContext c;c.now_ms=1;c.gps_valid=false;c.gps_loss_timeout_ms=1000;StateMachineRuntime r;updateStateMachine(c,r,FlightState::GUIDED_DESCENT,FailCode::FAIL_NONE);c.now_ms=1002;auto a=updateStateMachine(c,r,FlightState::GUIDED_DESCENT,FailCode::FAIL_NONE);TEST_ASSERT_EQUAL((int)FlightState::FAILSAFE_DESCENT,(int)a.new_state);}
+void final_approach_by_radius(){StateMachineContext c;c.now_ms=100;c.gps_valid=true;c.altitude_agl_m=100;c.distance_to_target_m=20;StateMachineRuntime r;auto a=updateStateMachine(c,r,FlightState::GUIDED_DESCENT,FailCode::FAIL_NONE);TEST_ASSERT_EQUAL((int)FlightState::FINAL_APPROACH,(int)a.new_state);}
+void flare_disabled(){StateMachineContext c;c.now_ms=100;c.gps_valid=c.baro_valid=c.imu_valid=true;c.altitude_agl_m=2;c.flare_enabled=false;StateMachineRuntime r;auto a=updateStateMachine(c,r,FlightState::FINAL_APPROACH,FailCode::FAIL_NONE);TEST_ASSERT_EQUAL((int)FlightState::FINAL_APPROACH,(int)a.new_state);}
+void landed_sustained(){StateMachineContext c;c.gps_valid=c.baro_valid=c.imu_valid=true;c.vertical_speed_mps=0;c.ground_speed_mps=0;c.angular_rate_dps=0;c.landed_confirm_ms=1000;StateMachineRuntime r;c.now_ms=1;updateStateMachine(c,r,FlightState::FINAL_APPROACH,FailCode::FAIL_NONE);c.now_ms=1002;auto a=updateStateMachine(c,r,FlightState::FINAL_APPROACH,FailCode::FAIL_NONE);TEST_ASSERT_EQUAL((int)FlightState::LANDED,(int)a.new_state);}
+int main(){UNITY_BEGIN();RUN_TEST(neutral_without_gps);RUN_TEST(left_and_right_turns);RUN_TEST(heading_wrap);RUN_TEST(low_speed_reduces_authority);RUN_TEST(oscillation_neutral);RUN_TEST(imu_failure_reduces_authority);RUN_TEST(unreachable_reduces_authority);RUN_TEST(close_target_neutral);RUN_TEST(gps_jump_rejected);RUN_TEST(nan_rejected);RUN_TEST(baro_spike_rejected);RUN_TEST(deployment_and_stabilization);RUN_TEST(unstable_times_out);RUN_TEST(gps_timeout_failsafe);RUN_TEST(final_approach_by_radius);RUN_TEST(flare_disabled);RUN_TEST(landed_sustained);return UNITY_END();}

@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+ <defs>
+  <marker id="a" markerWidth="11" markerHeight="11" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#334155"/></marker>
+  <marker id="b" markerWidth="11" markerHeight="11" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#2563eb"/></marker>
+  <style>
+   .title{font:700 38px Arial;fill:#0f172a}.sub{font:18px Arial;fill:#475569}.head{font:700 24px Arial;fill:#0f172a}.lab{font:700 17px Arial;fill:#0f172a}.txt{font:16px Arial;fill:#334155}.tiny{font:14px Arial;fill:#475569}.panel{fill:#fff;stroke:#cbd5e1;stroke-width:3}.call{fill:#fff;stroke:#94a3b8;stroke-width:2}.leader{fill:none;stroke:#334155;stroke-width:2;marker-end:url(#a)}
+  </style>
+ </defs>
+ <rect width="1600" height="1000" fill="#f8fafc"/>
+ <text x="800" y="54" text-anchor="middle" class="title">Phoenix Removable Recovery Cartridge</text>
+ <text x="800" y="84" text-anchor="middle" class="sub">A clean rebuild based on the photographed sled, circular plates, electronics, servos, battery and parafoil</text>
+
+ <!-- PANEL 1 -->
+ <rect x="45" y="115" width="735" height="760" rx="18" class="panel"/>
+ <text x="412" y="155" text-anchor="middle" class="head">A. Installed for flight</text>
+ <!-- tube -->
+ <path d="M205 205Q412 135 619 205V790Q412 835 205 790Z" fill="#f1f5f9" stroke="#334155" stroke-width="6"/>
+ <path d="M205 205Q412 135 619 205V292H205Z" fill="#dbeafe" stroke="#1d4ed8" stroke-width="4"/>
+ <path d="M282 220Q412 180 542 220L520 270Q412 240 304 270Z" fill="#60a5fa" stroke="#1d4ed8" stroke-width="3"/>
+ <text x="412" y="235" text-anchor="middle" class="lab">Parafoil in smooth sleeve</text>
+ <!-- cartridge body -->
+ <ellipse cx="412" cy="313" rx="164" ry="25" fill="#fff" stroke="#2563eb" stroke-width="5"/>
+ <rect x="278" y="313" width="268" height="418" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="4"/>
+ <rect x="296" y="325" width="17" height="392" fill="#fff" stroke="#64748b" stroke-width="3"/>
+ <rect x="511" y="325" width="17" height="392" fill="#fff" stroke="#64748b" stroke-width="3"/>
+ <ellipse cx="412" cy="731" rx="164" ry="25" fill="#fff" stroke="#2563eb" stroke-width="5"/>
+ <!-- line channels -->
+ <path d="M326 263C318 345 330 430 326 545" fill="none" stroke="#0f766e" stroke-width="16" opacity=".25"/>
+ <path d="M498 263C506 345 494 430 498 545" fill="none" stroke="#0f766e" stroke-width="16" opacity=".25"/>
+ <path d="M326 263C318 345 330 430 326 545M498 263C506 345 494 430 498 545" fill="none" stroke="#0f766e" stroke-width="5"/>
+ <!-- electronics -->
+ <rect x="346" y="354" width="132" height="150" rx="12" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+ <rect x="363" y="379" width="98" height="45" rx="5" fill="#86efac"/>
+ <rect x="363" y="440" width="98" height="42" rx="5" fill="#86efac"/>
+ <text x="412" y="345" text-anchor="middle" class="lab">Protected electronics</text>
+ <!-- servos -->
+ <rect x="347" y="531" width="130" height="70" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"/>
+ <rect x="361" y="546" width="43" height="40" fill="#c4b5fd"/><rect x="420" y="546" width="43" height="40" fill="#c4b5fd"/>
+ <text x="412" y="625" text-anchor="middle" class="lab">Rigid servo bracket</text>
+ <!-- battery -->
+ <rect x="347" y="644" width="130" height="66" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="3"/>
+ <path d="M339 657L485 697M339 697L485 657" stroke="#b45309" stroke-width="8" opacity=".65"/>
+ <text x="412" y="682" text-anchor="middle" class="lab">1S LiPo cradle</text>
+ <!-- pins and folded handle -->
+ <path d="M239 715V752M585 715V752" stroke="#dc2626" stroke-width="6"/><circle cx="239" cy="710" r="9" fill="#fecaca" stroke="#991b1b" stroke-width="3"/><circle cx="585" cy="710" r="9" fill="#fecaca" stroke="#991b1b" stroke-width="3"/>
+ <path d="M378 738Q412 758 446 738" fill="none" stroke="#475569" stroke-width="7" stroke-linecap="round"/>
+ <text x="412" y="780" text-anchor="middle" class="tiny">Handle folded flat • two captive locking pins installed</text>
+ <!-- callouts -->
+ <rect x="65" y="315" width="165" height="87" rx="9" class="call"/><text x="80" y="343" class="lab">Clean separation</text><text x="80" y="369" class="tiny">Lines never cross</text><text x="80" y="390" class="tiny">wires or sharp edges.</text><path d="M230 360L320 380" class="leader"/>
+ <rect x="594" y="440" width="165" height="108" rx="9" class="call"/><text x="609" y="468" class="lab">Load bypass</text><text x="609" y="494" class="tiny">Harness connects to</text><text x="609" y="515" class="tiny">rated structure—not</text><text x="609" y="536" class="tiny">electronics or battery.</text><path d="M594 490L528 320" class="leader"/>
+
+ <!-- PANEL 2 -->
+ <rect x="820" y="115" width="735" height="760" rx="18" class="panel"/>
+ <text x="1187" y="155" text-anchor="middle" class="head">B. Removed for service</text>
+ <!-- opened tube -->
+ <path d="M880 265H1125V735H880Z" fill="#f1f5f9" stroke="#334155" stroke-width="6"/>
+ <ellipse cx="1002" cy="265" rx="122" ry="23" fill="#fff" stroke="#334155" stroke-width="5"/>
+ <ellipse cx="1002" cy="735" rx="122" ry="23" fill="#e2e8f0" stroke="#334155" stroke-width="5"/>
+ <text x="1002" y="785" text-anchor="middle" class="lab">Open payload tube</text>
+ <!-- extraction arrow -->
+ <path d="M1145 500H1270" fill="none" stroke="#2563eb" stroke-width="9" marker-end="url(#b)"/>
+ <text x="1208" y="480" text-anchor="middle" class="lab" fill="#2563eb">Slide straight out</text>
+ <!-- extracted cartridge -->
+ <ellipse cx="1372" cy="263" rx="104" ry="19" fill="#fff" stroke="#2563eb" stroke-width="4"/>
+ <rect x="1286" y="263" width="172" height="460" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="4"/>
+ <ellipse cx="1372" cy="723" rx="104" ry="19" fill="#fff" stroke="#2563eb" stroke-width="4"/>
+ <rect x="1320" y="315" width="104" height="130" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+ <rect x="1320" y="482" width="104" height="65" rx="9" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"/>
+ <rect x="1320" y="585" width="104" height="70" rx="9" fill="#fef3c7" stroke="#d97706" stroke-width="3"/>
+ <!-- open handle -->
+ <path d="M1335 730V780Q1335 800 1355 800H1389Q1409 800 1409 780V730" fill="none" stroke="#475569" stroke-width="9" stroke-linecap="round"/>
+ <circle cx="1335" cy="730" r="8" fill="#cbd5e1" stroke="#334155" stroke-width="2"/><circle cx="1409" cy="730" r="8" fill="#cbd5e1" stroke="#334155" stroke-width="2"/>
+ <text x="1372" y="830" text-anchor="middle" class="lab">Folding pull handle</text>
+ <!-- removed pins -->
+ <path d="M1210 614V675M1185 614V675" stroke="#dc2626" stroke-width="6"/><circle cx="1210" cy="606" r="10" fill="#fecaca" stroke="#991b1b" stroke-width="3"/><circle cx="1185" cy="606" r="10" fill="#fecaca" stroke="#991b1b" stroke-width="3"/>
+ <text x="1198" y="705" text-anchor="middle" class="tiny">Captive pins pulled</text>
+ <!-- connector -->
+ <rect x="1090" y="355" width="58" height="35" rx="6" fill="#fee2e2" stroke="#b91c1c" stroke-width="3"/><rect x="1167" y="355" width="58" height="35" rx="6" fill="#fee2e2" stroke="#b91c1c" stroke-width="3"/><path d="M1148 372H1167" stroke="#b91c1c" stroke-width="3" stroke-dasharray="5 4"/>
+ <text x="1158" y="335" text-anchor="middle" class="lab">Keyed connector unplugged</text>
+ <!-- removal steps -->
+ <rect x="850" y="825" width="670" height="33" rx="8" fill="#dbeafe"/>
+ <text x="1185" y="848" text-anchor="middle" class="txt">Power OFF → open bay → unplug connector → pull both pins → unfold handle → slide cartridge out</text>
+
+ <!-- footer -->
+ <rect x="90" y="905" width="1420" height="64" rx="13" fill="#fff7ed" stroke="#ea580c" stroke-width="3"/>
+ <text x="800" y="933" text-anchor="middle" class="lab">Critical rule: never remove the cartridge by pulling the parafoil lines, wires, battery lead or recovery harness.</text>
+ <text x="800" y="957" text-anchor="middle" class="tiny">Concept only. Measure the real tube and verify pin, plate, handle and structural load ratings with an experienced rocketry mentor before flight.</text>
+</svg>

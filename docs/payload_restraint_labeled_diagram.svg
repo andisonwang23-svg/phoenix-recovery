@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <style>
+      .bg { fill: #f6f7f8; }
+      .tube { fill: #fdfdfb; stroke: #2b2f33; stroke-width: 3; }
+      .cut { fill: #dfe4e8; opacity: 0.72; stroke: #53616e; stroke-width: 2; }
+      .sled { fill: #ffffff; stroke: #2f3740; stroke-width: 3; }
+      .plate { fill: #f7f7f3; stroke: #2f3740; stroke-width: 3; }
+      .pad { fill: #2f6fb5; stroke: #173f71; stroke-width: 2; }
+      .board { fill: #1e252b; stroke: #000; stroke-width: 2; }
+      .chip { fill: #4b5563; }
+      .battery { fill: #d99a25; stroke: #694a12; stroke-width: 2; }
+      .strap { fill: #1f2933; }
+      .servo { fill: #171a20; stroke: #000; stroke-width: 2; }
+      .metal { fill: #c8ccd0; stroke: #4a4f55; stroke-width: 2; }
+      .switch { fill: #e7362e; stroke: #5d1110; stroke-width: 2; }
+      .handle { fill: #f2f2ee; stroke: #2f3740; stroke-width: 3; }
+      .line { fill: none; stroke: #1f2933; stroke-width: 3; }
+      .leader { fill: none; stroke: #1f2933; stroke-width: 2.5; marker-end: url(#arrow); }
+      .motion { fill: none; stroke: #1d72c9; stroke-width: 5; marker-end: url(#blueArrow); }
+      .label { font-family: Arial, Helvetica, sans-serif; font-size: 24px; fill: #111827; }
+      .small { font-family: Arial, Helvetica, sans-serif; font-size: 19px; fill: #374151; }
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 38px; font-weight: 700; fill: #111827; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 22px; fill: #4b5563; }
+      .note { font-family: Arial, Helvetica, sans-serif; font-size: 21px; fill: #111827; font-weight: 700; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2933"/>
+    </marker>
+    <marker id="blueArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1d72c9"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1600" height="1000"/>
+  <text x="800" y="60" text-anchor="middle" class="title">Payload Restraint Concept for IRIS 2.26</text>
+  <text x="800" y="94" text-anchor="middle" class="subtitle">Removable cartridge locked by centering plates, hard stops, anti-rotation key, and retention pins - no glue over the switch</text>
+
+  <!-- Left rocket full stack -->
+  <g transform="translate(120 130)">
+    <path class="tube" d="M100 90 C130 10 190 10 220 90 L220 180 L100 180 Z"/>
+    <rect class="tube" x="100" y="180" width="120" height="340"/>
+    <line class="line" x1="86" y1="520" x2="234" y2="520"/>
+    <rect class="tube" x="100" y="520" width="120" height="300"/>
+    <polygon class="tube" points="100,735 20,840 100,820"/>
+    <polygon class="tube" points="220,735 300,840 220,820"/>
+    <polygon class="tube" points="160,720 144,850 176,850"/>
+    <rect class="switch" x="144" y="508" width="32" height="18" rx="2"/>
+    <text x="160" y="870" text-anchor="middle" class="small">assembled rocket</text>
+
+    <path class="leader" d="M220 95 L320 80"/>
+    <text x="334" y="86" class="label">nosecone</text>
+    <path class="leader" d="M100 350 L20 350"/>
+    <text x="18" y="315" text-anchor="end" class="label">top 1/3</text>
+    <text x="18" y="344" text-anchor="end" class="label">payload bay</text>
+    <path class="leader" d="M100 660 L20 660"/>
+    <text x="18" y="646" text-anchor="end" class="label">bottom 2/3 body</text>
+    <path class="leader" d="M160 520 L325 560"/>
+    <text x="340" y="565" class="label">switch access at joint</text>
+  </g>
+
+  <!-- Main cutaway payload bay -->
+  <g transform="translate(560 135)">
+    <rect class="tube" x="0" y="60" width="340" height="680" rx="22"/>
+    <rect class="cut" x="62" y="82" width="216" height="636" rx="14"/>
+    <rect class="metal" x="64" y="83" width="16" height="632" rx="8"/>
+    <rect class="metal" x="260" y="83" width="16" height="632" rx="8"/>
+
+    <!-- anti-rotation keyway -->
+    <rect x="296" y="295" width="12" height="160" fill="#1f2933" rx="2"/>
+    <rect x="282" y="360" width="26" height="18" fill="#9ca3af" rx="3"/>
+
+    <!-- cartridge -->
+    <ellipse class="plate" cx="170" cy="110" rx="132" ry="28"/>
+    <rect class="sled" x="118" y="118" width="20" height="520" rx="8"/>
+    <rect class="sled" x="202" y="118" width="20" height="520" rx="8"/>
+    <ellipse class="plate" cx="170" cy="650" rx="132" ry="28"/>
+    <rect class="pad" x="50" y="86" width="42" height="35" rx="7"/>
+    <rect class="pad" x="248" y="86" width="42" height="35" rx="7"/>
+    <rect class="pad" x="50" y="625" width="42" height="35" rx="7"/>
+    <rect class="pad" x="248" y="625" width="42" height="35" rx="7"/>
+
+    <!-- components -->
+    <rect class="board" x="102" y="155" width="136" height="145" rx="6"/>
+    <rect class="chip" x="138" y="178" width="44" height="44" rx="4"/>
+    <rect class="chip" x="112" y="240" width="28" height="22" rx="3"/>
+    <rect class="chip" x="198" y="240" width="28" height="22" rx="3"/>
+    <rect class="battery" x="118" y="318" width="104" height="150" rx="9"/>
+    <rect class="strap" x="102" y="382" width="136" height="34" rx="6"/>
+    <path d="M236 238 C270 295 262 382 246 498" fill="none" stroke="#d32f2f" stroke-width="6"/>
+    <path d="M222 242 C252 305 248 395 234 504" fill="none" stroke="#f9a825" stroke-width="6"/>
+    <path d="M208 244 C232 305 232 397 222 505" fill="none" stroke="#111827" stroke-width="6"/>
+    <rect class="servo" x="96" y="510" width="64" height="112" rx="8"/>
+    <rect class="servo" x="180" y="510" width="64" height="112" rx="8"/>
+    <circle class="metal" cx="128" cy="562" r="17"/>
+    <circle class="metal" cx="212" cy="562" r="17"/>
+
+    <!-- retention pins and switch -->
+    <rect class="metal" x="-62" y="664" width="116" height="16" rx="8"/>
+    <circle class="metal" cx="-67" cy="672" r="16"/>
+    <rect class="metal" x="286" y="664" width="116" height="16" rx="8"/>
+    <circle class="metal" cx="407" cy="672" r="16"/>
+    <rect class="switch" x="140" y="668" width="60" height="32" rx="4"/>
+    <path class="handle" d="M144 720 h52 v85 h-52 z M156 745 h28 v35 h-28 z"/>
+
+    <!-- labels -->
+    <path class="leader" d="M290 104 L430 112"/>
+    <text x="445" y="119" class="label">centering plates</text>
+    <path class="leader" d="M66 642 L-110 604"/>
+    <text x="-125" y="596" text-anchor="end" class="label">soft vibration pads</text>
+    <path class="leader" d="M300 374 L430 356"/>
+    <text x="445" y="363" class="label">anti-rotation key</text>
+    <path class="leader" d="M284 650 L430 606"/>
+    <text x="445" y="613" class="label">hard stop ring</text>
+    <path class="leader" d="M352 672 L430 704"/>
+    <text x="445" y="710" class="label">retention pins</text>
+    <path class="leader" d="M170 684 L-108 705"/>
+    <text x="-125" y="712" text-anchor="end" class="label">bottom switch</text>
+    <path class="leader" d="M170 765 L-108 800"/>
+    <text x="-125" y="807" text-anchor="end" class="label">pull handle</text>
+    <path class="leader" d="M126 555 L-108 512"/>
+    <text x="-125" y="519" text-anchor="end" class="label">two brake servos</text>
+    <path class="leader" d="M170 380 L-108 374"/>
+    <text x="-125" y="381" text-anchor="end" class="label">strapped battery cradle</text>
+    <path class="leader" d="M170 210 L-108 236"/>
+    <text x="-125" y="243" text-anchor="end" class="label">protected electronics</text>
+  </g>
+
+  <!-- Right exploded/removal view -->
+  <g transform="translate(1195 130)">
+    <path class="tube" d="M70 20 C95 -45 165 -45 190 20 L190 104 L70 104 Z"/>
+    <rect class="tube" x="70" y="135" width="120" height="245" rx="12"/>
+    <rect class="cut" x="94" y="155" width="72" height="205" rx="8"/>
+    <ellipse class="plate" cx="130" cy="145" rx="82" ry="19"/>
+    <ellipse class="plate" cx="130" cy="378" rx="82" ry="19"/>
+
+    <rect class="sled" x="92" y="470" width="76" height="235" rx="8"/>
+    <ellipse class="plate" cx="130" cy="462" rx="86" ry="20"/>
+    <rect class="board" x="104" y="490" width="52" height="55" rx="5"/>
+    <rect class="battery" x="105" y="555" width="50" height="78" rx="6"/>
+    <rect class="strap" x="98" y="586" width="64" height="20" rx="4"/>
+    <rect class="servo" x="96" y="645" width="30" height="56" rx="5"/>
+    <rect class="servo" x="134" y="645" width="30" height="56" rx="5"/>
+    <ellipse class="plate" cx="130" cy="720" rx="86" ry="20"/>
+    <rect class="switch" x="108" y="722" width="44" height="22" rx="3"/>
+    <path class="handle" d="M111 748 h38 v58 h-38 z M121 766 h18 v24 h-18 z"/>
+
+    <rect class="tube" x="70" y="815" width="120" height="100" rx="8"/>
+    <rect class="switch" x="108" y="810" width="44" height="18" rx="3"/>
+    <line class="motion" x1="130" y1="420" x2="130" y2="455"/>
+    <line class="motion" x1="82" y1="722" x2="20" y2="722"/>
+    <line class="motion" x1="178" y1="722" x2="240" y2="722"/>
+
+    <text x="130" y="955" text-anchor="middle" class="small">remove: separate body, pull pins, use handle, slide cartridge out</text>
+    <path class="leader" d="M130 605 L315 570"/>
+    <text x="330" y="577" class="label">removable cartridge</text>
+  </g>
+
+  <text x="800" y="960" text-anchor="middle" class="note">Rule: foam reduces vibration, but screws/pins/hard stops provide the real restraint. Never pull the payload out by wires or parafoil lines.</text>
+</svg>
