@@ -30,6 +30,9 @@ struct CoordinatorInput {
     bool imu_valid = false;
     bool barometer_valid = false;
     bool servo_valid = true;
+    bool remote_manual_active = false;
+    float remote_servo1_brake = 0.0f;
+    float remote_servo2_brake = 0.0f;
 };
 
 struct TransitionTimestamps {
@@ -67,6 +70,8 @@ struct CoordinatorOutput {
     bool degraded_guidance = false;
     bool launch_readiness_ok = false;
     bool preflight_launch_warning = false;
+    bool remote_command_allowed = false;
+    bool remote_manual_active = false;
 };
 
 class FlightCoordinator {

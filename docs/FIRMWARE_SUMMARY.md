@@ -105,7 +105,12 @@ BOOT → SELF_TEST → PAD_SAFE → ASCENT → APOGEE_TRANSITION
 
 ### 7. WiFi Dashboard (`comms/wifi_manager.cpp`)
 
-- AP mode: `PHOENIX-RECOVERY` / `parafoil`
+- Payload AP is disabled by default (`PAYLOAD_WIFI_ENABLED = false`)
+- The separate ground board provides `PHOENIX-GROUND` / `phoenixground`
+- Ground dashboard: `http://192.168.8.1/`
+- Payload configuration and telemetry cross the LoRa link
+- The legacy payload dashboard implementation remains available for controlled
+  development builds if the configuration flag is explicitly enabled
 - AsyncWebServer + SSE live updates
 - Endpoints:
   - `/` - Main dashboard
@@ -215,8 +220,8 @@ pio run -e rocket --build-flags="-DSIMULATION_MODE=1"
 ## Verification
 
 **Flashing successful:** ✅
-**WiFi AP active:** ✅ (PHOENIX-RECOVERY)
-**Dashboard endpoints:** ✅ (all 5 endpoints responding)
+**Payload WiFi:** disabled by default
+**Ground dashboard:** `PHOENIX-GROUND` at `http://192.168.8.1/`
 **Firmware state:** SELF_TEST (awaiting I2C sensors)
 
 **To complete setup:**

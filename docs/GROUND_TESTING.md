@@ -42,32 +42,38 @@ On boot, the system runs automatic checks:
 
 All critical sensors (IMU, Baro) must pass. GPS and LoRa are non-critical for autonomous flight.
 
-### 2. WiFi Dashboard Access
+### 2. Ground-station Dashboard Access
 
-1. Power on the device
-2. Connect to WiFi: `PHOENIX-RECOVERY` (password: `parafoil`)
-3. Open browser: `http://192.168.4.1`
+1. Power on both the payload and the separate ground LoRa board.
+2. Connect to WiFi: `PHOENIX-GROUND` (password: `phoenixground`)
+3. Open browser: `http://192.168.8.1/`
+
+The payload Wi-Fi radio is disabled. Payload status and commands cross the
+LoRa link; the computer connects only to the ground board.
 
 ### 3. Configuration
 
-Navigate to `http://192.168.4.1/config` to set:
+Use the ground dashboard target controls to set the target coordinates over
+LoRa. Other control constants remain compile-time firmware configuration.
 
-| Parameter | Description | Required |
+| Parameter | Where it is set | Required |
 |-----------|-------------|----------|
-| Target Latitude | Landing zone latitude | **YES** |
-| Target Longitude | Landing zone longitude | **YES** |
-| Kp (heading) | Steering gain (default: 0.02) | No |
-| Deadband | Heading error deadband (default: 5°) | No |
-| Servo Neutral | Pulse width at neutral (default: 1500μs) | No |
-| Deployment Wait | Time before deployment (default: 1500ms) | No |
-| Stabilization | Canopy settle time (default: 3000ms) | No |
-| Flare Enable | Enable flare landing (default: true) | No |
+| Target Latitude | Ground dashboard over LoRa | **YES** |
+| Target Longitude | Ground dashboard over LoRa | **YES** |
+| Kp / deadband | Payload firmware configuration | No |
+| Servo calibration | Payload NVS calibration | **YES** |
+| Deployment / stabilization timing | Payload firmware configuration | **YES** |
+| Flare enable | Payload firmware; must remain `false` until validated | **YES** |
 
 ---
 
 ## Servo Testing
 
-### Via WiFi Dashboard
+### Legacy payload dashboard (development builds only)
+
+The following interface is unavailable in the normal flight build because
+payload Wi-Fi is disabled. Do not enable it for flight merely to perform a
+bench test; use a dedicated controlled development build instead.
 
 1. Navigate to `http://192.168.4.1/bench`
 2. Use control buttons:

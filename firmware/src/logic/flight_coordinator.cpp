@@ -180,6 +180,16 @@ CoordinatorOutput FlightCoordinator::step(const CoordinatorInput& in) {
     if (failure_ != FailCode::FAIL_NONE && state_ != FlightState::LANDED)
         mode = GuidanceMode::MODE_FAILSAFE;
 
+    out.remote_command_allowed =
+        (state_ == FlightState::GUIDED_DESCENT || state_ == FlightState::FINAL_APPROACH) &&
+        failure_ == FailCode::FAIL_NONE &&
+        in.servo_valid &&
+        (in.imu_valid || in.barometer_valid);
+    out.remote_manual_active = out.remote_command_allowed && in.remote_manual_active;
+    if (out.remote_manual_active) {
+        mode = GuidanceMode::REMOTE_MANUAL;
+    }
+
     GuidanceInput guidance_in;
     guidance_in.current_lat = in.latitude;
     guidance_in.current_lon = in.longitude;
@@ -213,6 +223,9 @@ CoordinatorOutput FlightCoordinator::step(const CoordinatorInput& in) {
         // Initial consolidated failsafe policy: direct, immediate neutral only.
         out.requested_left_brake = 0.0f;
         out.requested_right_brake = 0.0f;
+    } else if (out.remote_manual_active) {
+        out.requested_left_brake = fminf(fmaxf(in.remote_servo1_brake, -config_.guidance.max_steering), config_.guidance.max_steering);
+        out.requested_right_brake = fminf(fmaxf(in.remote_servo2_brake, -config_.guidance.max_steering), config_.guidance.max_steering);
     } else {
         out.requested_left_brake = guidance.steering_command < 0.0f ? -guidance.steering_command : 0.0f;
         out.requested_right_brake = guidance.steering_command > 0.0f ? guidance.steering_command : 0.0f;

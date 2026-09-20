@@ -3,10 +3,12 @@
 // ============================================================================
 // Autonomous parafoil recovery system for Heltec ESP32-S3 LoRa V4.
 // Boots, self-tests, calibrates, detects flight phases, and guides
-// parafoil to GPS target. WiFi dashboard available for config/bench test.
+// parafoil to GPS target. Configuration/monitoring is provided by the separate
+// LoRa ground station; the payload Wi-Fi radio is disabled by default.
 // ============================================================================
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include "config.h"
 #include "vehicle_state.h"
 
@@ -56,6 +58,19 @@ void sendTelemetry();
 void updateHealth();
 void logFlightData();
 void printStatus();
+void updateLoRaRemoteControl();
+bool saveRemoteTarget(double latitude, double longitude);
+void loadPersistedTarget();
+bool remoteControlAllowedForState(logic::FlightState state);
+
+static uint32_t last_lora_remote_poll_ms = 0;
+static bool lora_remote_runtime_enabled = cfg::LORA_REMOTE_CONTROL_ENABLED;
+static bool lora_remote_manual_active = false;
+static uint32_t lora_remote_command_expires_ms = 0;
+static float lora_remote_servo1_command = 0.0f;
+static float lora_remote_servo2_command = 0.0f;
+static bool lora_bench_servo_active = false;
+static uint32_t lora_bench_servo_expires_ms = 0;
 
 static logic::CoordinatorConfig coordinatorConfig() {
     logic::CoordinatorConfig c;
@@ -102,10 +117,18 @@ void setup() {
         Serial.println("[BOOT] WARNING: Using default config");
     }
 
-    // WiFi is an always-on maintenance interface. Start it before every other
-    // subsystem so power-on immediately creates the Phoenix access point.
-    if (!wifi.begin(&vehicle, &servos)) {
-        Serial.println("[BOOT] WARNING: WiFi init failed; automatic retry enabled");
+    // Target persistence must not depend on the payload web dashboard.
+    loadPersistedTarget();
+
+    if (cfg::PAYLOAD_WIFI_ENABLED) {
+        if (!wifi.begin(&vehicle, &servos)) {
+            Serial.println("[BOOT] WARNING: WiFi init failed; automatic retry enabled");
+        }
+    } else {
+        WiFi.persistent(false);
+        WiFi.mode(WIFI_OFF);
+        vehicle.wifi_client_count = 0;
+        Serial.println("[BOOT] Payload WiFi disabled; use PHOENIX-GROUND over LoRa");
     }
 
     // Initialize watchdog first
@@ -182,6 +205,7 @@ void loop() {
 
     // ---- Sensor Read (every loop) ----
     sensor_mgr.update(vehicle);
+    updateLoRaRemoteControl();
 
     // Edge-triggered sensor and actuator events; communications are
     // intentionally absent because their loss never changes flight control.
@@ -222,6 +246,9 @@ void loop() {
     coordinator_in.imu_valid = vehicle.imu_valid;
     coordinator_in.barometer_valid = vehicle.barometer_valid;
     coordinator_in.servo_valid = servos.isHealthy();
+    coordinator_in.remote_manual_active = lora_remote_manual_active;
+    coordinator_in.remote_servo1_brake = lora_remote_servo1_command;
+    coordinator_in.remote_servo2_brake = lora_remote_servo2_command;
     logic::CoordinatorOutput command = coordinator.step(coordinator_in);
 
     vehicle.flight_state = command.state;
@@ -235,6 +262,9 @@ void loop() {
     vehicle.degraded_guidance = command.degraded_guidance;
     vehicle.launch_readiness_ok = command.launch_readiness_ok;
     vehicle.preflight_launch_warning = command.preflight_launch_warning;
+    vehicle.lora_remote_enabled = lora_remote_runtime_enabled;
+    vehicle.lora_remote_command_allowed = command.remote_command_allowed;
+    vehicle.lora_remote_manual_active = command.remote_manual_active;
     vehicle.target_bearing_deg = command.target_bearing_deg;
     vehicle.heading_error_deg = command.heading_error_deg;
     vehicle.distance_to_target_m = command.distance_to_target_m;
@@ -292,15 +322,24 @@ void loop() {
     previous_preflight_launch_warning = command.preflight_launch_warning;
 
     health.update(vehicle);
-    const bool ground_servo_test_active = wifi.isServoTestActive();
+    const bool ground_servo_test_active =
+        cfg::PAYLOAD_WIFI_ENABLED && wifi.isServoTestActive();
 
     // Failsafe directly commands immediate neutral and no later branch can
     // overwrite it. Ground tests are permitted only in pad-safe states.
     if (command.failsafe_active || command.state == logic::FlightState::LANDED) {
         servos.emergencyNeutral();
+    } else if (lora_bench_servo_active &&
+               (command.state == logic::FlightState::PAD_SAFE ||
+                command.state == logic::FlightState::SELF_TEST)) {
+        servos.setServoCommands(lora_remote_servo1_command, lora_remote_servo2_command);
+        servos.update();
     } else if (ground_servo_test_active &&
                (command.state == logic::FlightState::PAD_SAFE ||
                 command.state == logic::FlightState::SELF_TEST)) {
+        servos.update();
+    } else if (command.remote_manual_active) {
+        servos.setServoCommands(command.requested_left_brake, command.requested_right_brake);
         servos.update();
     } else {
         servos.setBrakeCommands(command.requested_left_brake, command.requested_right_brake);
@@ -344,8 +383,8 @@ void loop() {
         last_log_ms = now;
     }
 
-    // ---- WiFi Dashboard ----
-    wifi.update();
+    // ---- Optional payload WiFi dashboard ----
+    if (cfg::PAYLOAD_WIFI_ENABLED) wifi.update();
 
     // Periodic hardware diagnostics are intentionally concise enough to leave
     // enabled in bench builds. They verify that initialized devices continue
@@ -361,10 +400,186 @@ void loop() {
 
     last_loop_ms = now;
 
-    // Yield to the ESP32 WiFi/TCP and idle tasks. A permanently busy Arduino
-    // loop starves core-0 background work and eventually trips the interrupt
-    // watchdog, which made the dashboard appear only partially functional.
+    // Yield to the ESP32 idle tasks and, when enabled, its WiFi/TCP tasks.
     delay(1);
+}
+
+bool remoteControlAllowedForState(logic::FlightState state) {
+    return state == logic::FlightState::GUIDED_DESCENT ||
+           state == logic::FlightState::FINAL_APPROACH;
+}
+
+bool saveRemoteTarget(double latitude, double longitude) {
+    if (!isfinite(latitude) || !isfinite(longitude)) return false;
+    if (latitude < -90.0 || latitude > 90.0) return false;
+    if (longitude < -180.0 || longitude > 180.0) return false;
+    if (fabs(latitude) < 1e-9 && fabs(longitude) < 1e-9) return false;
+
+    Preferences targetPrefs;
+    if (!targetPrefs.begin("target_cfg", false)) return false;
+    targetPrefs.putDouble("latitude", latitude);
+    targetPrefs.putDouble("longitude", longitude);
+    targetPrefs.end();
+    return true;
+}
+
+void loadPersistedTarget() {
+    Preferences targetPrefs;
+    if (targetPrefs.begin("target_cfg", true)) {
+        vehicle.target_latitude =
+            targetPrefs.getDouble("latitude", cfg::TARGET_LATITUDE);
+        vehicle.target_longitude =
+            targetPrefs.getDouble("longitude", cfg::TARGET_LONGITUDE);
+        targetPrefs.end();
+    } else {
+        vehicle.target_latitude = cfg::TARGET_LATITUDE;
+        vehicle.target_longitude = cfg::TARGET_LONGITUDE;
+    }
+}
+
+void updateLoRaRemoteControl() {
+    const uint32_t now = millis();
+    vehicle.lora_remote_enabled = lora_remote_runtime_enabled;
+    vehicle.lora_remote_link_active =
+        vehicle.lora_remote_last_rx_ms != 0 &&
+        now - vehicle.lora_remote_last_rx_ms <= cfg::LORA_REMOTE_COMMAND_TIMEOUT_MS;
+    vehicle.lora_remote_command_age_ms =
+        vehicle.lora_remote_last_rx_ms == 0 ? UINT32_MAX : now - vehicle.lora_remote_last_rx_ms;
+
+    if (lora_remote_manual_active &&
+        static_cast<int32_t>(now - lora_remote_command_expires_ms) >= 0) {
+        lora_remote_manual_active = false;
+        lora_remote_servo1_command = 0.0f;
+        lora_remote_servo2_command = 0.0f;
+        ring_buf.pushEvent("LORA_REMOTE_EXPIRED");
+        flash_log.logEvent("LORA_REMOTE_EXPIRED");
+    }
+    if (lora_bench_servo_active &&
+        static_cast<int32_t>(now - lora_bench_servo_expires_ms) >= 0) {
+        lora_bench_servo_active = false;
+        lora_remote_servo1_command = 0.0f;
+        lora_remote_servo2_command = 0.0f;
+        servos.emergencyNeutral();
+        ring_buf.pushEvent("LORA_BENCH_SERVO_NEUTRAL");
+        flash_log.logEvent("LORA_BENCH_SERVO_NEUTRAL");
+    }
+
+    if (!cfg::LORA_REMOTE_CONTROL_ENABLED || !lora_remote_runtime_enabled || !lora.isHealthy()) {
+        vehicle.lora_remote_manual_active = false;
+        vehicle.lora_remote_servo1_command = 0.0f;
+        vehicle.lora_remote_servo2_command = 0.0f;
+        return;
+    }
+    if (now - last_lora_remote_poll_ms < cfg::LORA_REMOTE_POLL_INTERVAL_MS) return;
+    last_lora_remote_poll_ms = now;
+
+    comms::LoRaRemoteCommand remote;
+    if (!lora.pollRemoteCommand(remote)) return;
+
+    vehicle.lora_remote_last_rx_ms = now;
+    vehicle.lora_remote_sequence = remote.sequence;
+    vehicle.lora_rssi = static_cast<int8_t>(remote.rssi);
+    vehicle.lora_snr = remote.snr;
+
+    switch (remote.type) {
+        case comms::LoRaRemoteCommandType::PING:
+            vehicle.lora_remote_accepted_count++;
+            ring_buf.pushEvent("LORA_REMOTE_PING");
+            break;
+        case comms::LoRaRemoteCommandType::SET_TARGET:
+            if (saveRemoteTarget(remote.target_latitude, remote.target_longitude)) {
+                vehicle.target_latitude = remote.target_latitude;
+                vehicle.target_longitude = remote.target_longitude;
+                vehicle.lora_remote_accepted_count++;
+                ring_buf.pushEvent("LORA_REMOTE_TARGET_SET");
+                flash_log.logEvent("LORA_REMOTE_TARGET_SET");
+            } else {
+                vehicle.lora_remote_rejected_count++;
+                ring_buf.pushEvent("LORA_REMOTE_TARGET_REJECTED");
+            }
+            break;
+        case comms::LoRaRemoteCommandType::NEUTRAL:
+            lora_remote_manual_active = false;
+            lora_bench_servo_active = false;
+            lora_remote_servo1_command = 0.0f;
+            lora_remote_servo2_command = 0.0f;
+            vehicle.lora_remote_accepted_count++;
+            ring_buf.pushEvent("LORA_REMOTE_NEUTRAL");
+            flash_log.logEvent("LORA_REMOTE_NEUTRAL");
+            break;
+        case comms::LoRaRemoteCommandType::BENCH_SERVO: {
+            const bool bench_safe = cfg::LORA_BENCH_SERVO_TEST_ENABLED &&
+                (vehicle.flight_state == logic::FlightState::PAD_SAFE ||
+                 vehicle.flight_state == logic::FlightState::SELF_TEST) &&
+                vehicle.failure_code == logic::FailCode::FAIL_NONE &&
+                servos.isHealthy();
+            if (!bench_safe) {
+                lora_bench_servo_active = false;
+                lora_remote_servo1_command = 0.0f;
+                lora_remote_servo2_command = 0.0f;
+                vehicle.lora_remote_rejected_count++;
+                ring_buf.pushEvent("LORA_BENCH_SERVO_REJECTED");
+                break;
+            }
+            lora_remote_servo1_command = constrain(remote.servo1_command,
+                                                    -cfg::LORA_BENCH_MAX_SERVO_COMMAND,
+                                                    cfg::LORA_BENCH_MAX_SERVO_COMMAND);
+            lora_remote_servo2_command = constrain(remote.servo2_command,
+                                                    -cfg::LORA_BENCH_MAX_SERVO_COMMAND,
+                                                    cfg::LORA_BENCH_MAX_SERVO_COMMAND);
+            lora_remote_manual_active = false;
+            lora_bench_servo_active = true;
+            lora_bench_servo_expires_ms = now + cfg::LORA_BENCH_SERVO_TIMEOUT_MS;
+            vehicle.lora_remote_accepted_count++;
+            ring_buf.pushEvent("LORA_BENCH_SERVO_ACTIVE");
+            flash_log.logEvent("LORA_BENCH_SERVO_ACTIVE");
+            break;
+        }
+        case comms::LoRaRemoteCommandType::MANUAL_BRAKE: {
+            const bool safe_state = remoteControlAllowedForState(vehicle.flight_state) &&
+                vehicle.failure_code == logic::FailCode::FAIL_NONE &&
+                servos.isHealthy() &&
+                (vehicle.imu_valid || vehicle.barometer_valid);
+            if (!safe_state) {
+                lora_remote_manual_active = false;
+                lora_remote_servo1_command = 0.0f;
+                lora_remote_servo2_command = 0.0f;
+                vehicle.lora_remote_rejected_count++;
+                ring_buf.pushEvent("LORA_REMOTE_MANUAL_REJECTED");
+                flash_log.logEvent("LORA_REMOTE_MANUAL_REJECTED");
+                break;
+            }
+            lora_remote_servo1_command = constrain(remote.servo1_command,
+                                                   -cfg::LORA_REMOTE_MAX_BRAKE_COMMAND,
+                                                   cfg::LORA_REMOTE_MAX_BRAKE_COMMAND);
+            lora_remote_servo2_command = constrain(remote.servo2_command,
+                                                   -cfg::LORA_REMOTE_MAX_BRAKE_COMMAND,
+                                                   cfg::LORA_REMOTE_MAX_BRAKE_COMMAND);
+            lora_remote_manual_active = true;
+            lora_remote_command_expires_ms = now + cfg::LORA_REMOTE_COMMAND_TIMEOUT_MS;
+            vehicle.lora_remote_accepted_count++;
+            ring_buf.pushEvent("LORA_REMOTE_MANUAL_ACTIVE");
+            break;
+        }
+        case comms::LoRaRemoteCommandType::DISABLE_REMOTE:
+            lora_remote_runtime_enabled = false;
+            lora_remote_manual_active = false;
+            lora_bench_servo_active = false;
+            lora_remote_servo1_command = 0.0f;
+            lora_remote_servo2_command = 0.0f;
+            vehicle.lora_remote_accepted_count++;
+            ring_buf.pushEvent("LORA_REMOTE_DISABLED");
+            flash_log.logEvent("LORA_REMOTE_DISABLED");
+            break;
+        default:
+            vehicle.lora_remote_rejected_count++;
+            ring_buf.pushEvent("LORA_REMOTE_UNKNOWN");
+            break;
+    }
+
+    vehicle.lora_remote_manual_active = lora_remote_manual_active;
+    vehicle.lora_remote_servo1_command = lora_remote_servo1_command;
+    vehicle.lora_remote_servo2_command = lora_remote_servo2_command;
 }
 
 // ============================================================================
@@ -523,13 +738,17 @@ void printStatus() {
                   vehicle.gps_valid ? "FIX" : "NO FIX", vehicle.satellite_count,
                   gps.last_nmea_ms > 0 ? "ACTIVE" : "NONE", (unsigned long)nmea_age,
                   vehicle.latitude, vehicle.longitude);
-    Serial.printf("WIFI: %s mode=%d SSID=%s IP=%s clients=%d starts=%lu/%lu last_start=%lums\n",
-                  wifi.isRunning() ? "ACTIVE" : "INACTIVE",
-                  static_cast<int>(WiFi.getMode()), cfg::WIFI_AP_SSID,
-                  wifi.getAPIP().toString().c_str(), wifi.getClientCount(),
-                  (unsigned long)wifi.getSuccessfulStarts(),
-                  (unsigned long)wifi.getRestartAttempts(),
-                  (unsigned long)wifi.getLastStartMs());
+    if (cfg::PAYLOAD_WIFI_ENABLED) {
+        Serial.printf("WIFI: ACTIVE=%s mode=%d SSID=%s IP=%s clients=%d starts=%lu/%lu last_start=%lums\n",
+                      wifi.isRunning() ? "YES" : "NO",
+                      static_cast<int>(WiFi.getMode()), cfg::WIFI_AP_SSID,
+                      wifi.getAPIP().toString().c_str(), wifi.getClientCount(),
+                      (unsigned long)wifi.getSuccessfulStarts(),
+                      (unsigned long)wifi.getRestartAttempts(),
+                      (unsigned long)wifi.getLastStartMs());
+    } else {
+        Serial.println("WIFI: DISABLED ON PAYLOAD (use PHOENIX-GROUND)");
+    }
     Serial.printf("Target: %.6f, %.6f\n", vehicle.target_latitude, vehicle.target_longitude);
     Serial.printf("Distance: %.1fm, Heading: %.1f deg\n",
                   vehicle.distance_to_target_m, vehicle.heading_error_deg);

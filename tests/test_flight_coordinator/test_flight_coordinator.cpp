@@ -265,6 +265,82 @@ void communications_loss_has_no_control_input() {
     TEST_ASSERT_TRUE(before.requested_left_brake > 0 && after.requested_left_brake > 0);
 }
 
+void lora_remote_manual_commands_only_in_descent() {
+    FlightCoordinator c(testConfig());
+    reachGuidance(c);
+    CoordinatorInput i = nominal(605);
+    i.vertical_speed_mps = -3;
+    i.remote_manual_active = true;
+    i.remote_servo1_brake = 0.20f;
+    i.remote_servo2_brake = 0.05f;
+    auto o = c.step(i);
+    TEST_ASSERT_TRUE(o.remote_command_allowed);
+    TEST_ASSERT_TRUE(o.remote_manual_active);
+    TEST_ASSERT_EQUAL((int)GuidanceMode::REMOTE_MANUAL, (int)o.mode);
+    TEST_ASSERT_FLOAT_WITHIN(.001f, 0.20f, o.requested_left_brake);
+    TEST_ASSERT_FLOAT_WITHIN(.001f, 0.05f, o.requested_right_brake);
+
+    FlightCoordinator ascent(testConfig());
+    i = nominal(1);
+    ascent.step(i);
+    i.now_ms = 2; ascent.step(i);
+    i.vertical_accel_mps2 = 12; i.vertical_speed_mps = 8; i.altitude_agl_m = 20;
+    i.now_ms = 10; ascent.step(i);
+    i.now_ms = 111;
+    i.remote_manual_active = true;
+    i.remote_servo1_brake = 0.25f;
+    i.remote_servo2_brake = 0.25f;
+    o = ascent.step(i);
+    TEST_ASSERT_EQUAL((int)FlightState::ASCENT, (int)o.state);
+    TEST_ASSERT_FALSE(o.remote_command_allowed);
+    TEST_ASSERT_FALSE(o.remote_manual_active);
+    TEST_ASSERT_FLOAT_WITHIN(.001f, 0.0f, o.requested_left_brake);
+    TEST_ASSERT_FLOAT_WITHIN(.001f, 0.0f, o.requested_right_brake);
+}
+
+void lora_remote_can_steer_without_target_after_stabilization() {
+    FlightCoordinator c(testConfig());
+    reachGuidance(c, false);
+    CoordinatorInput i = nominal(605);
+    i.target_latitude = 0;
+    i.target_longitude = 0;
+    i.vertical_speed_mps = -3;
+    i.remote_manual_active = true;
+    i.remote_servo1_brake = 0.12f;
+    i.remote_servo2_brake = 0.00f;
+    auto o = c.step(i);
+    TEST_ASSERT_EQUAL((int)FlightState::GUIDED_DESCENT, (int)o.state);
+    TEST_ASSERT_FALSE(o.target_valid);
+    TEST_ASSERT_TRUE(o.remote_command_allowed);
+    TEST_ASSERT_TRUE(o.remote_manual_active);
+    TEST_ASSERT_EQUAL((int)GuidanceMode::REMOTE_MANUAL, (int)o.mode);
+    TEST_ASSERT_FLOAT_WITHIN(.001f, 0.12f, o.requested_left_brake);
+    TEST_ASSERT_FLOAT_WITHIN(.001f, 0.00f, o.requested_right_brake);
+}
+
+void lora_remote_cannot_override_failsafe() {
+    FlightCoordinator c(testConfig());
+    reachGuidance(c);
+    CoordinatorInput i = nominal(600);
+    i.vertical_speed_mps = -3;
+    i.imu_valid = false;
+    i.barometer_valid = false;
+    c.step(i);
+    i.now_ms = 700;
+    i.imu_valid = true;
+    i.barometer_valid = true;
+    i.remote_manual_active = true;
+    i.remote_servo1_brake = 0.25f;
+    i.remote_servo2_brake = 0.25f;
+    auto o = c.step(i);
+    TEST_ASSERT_TRUE(o.failsafe_active);
+    TEST_ASSERT_FALSE(o.remote_command_allowed);
+    TEST_ASSERT_FALSE(o.remote_manual_active);
+    TEST_ASSERT_EQUAL((int)GuidanceMode::MODE_FAILSAFE, (int)o.mode);
+    TEST_ASSERT_FLOAT_WITHIN(.001f, 0.0f, o.requested_left_brake);
+    TEST_ASSERT_FLOAT_WITHIN(.001f, 0.0f, o.requested_right_brake);
+}
+
 void failsafe_can_land_but_failure_remains_recorded() {
     FlightCoordinator c(testConfig()); reachGuidance(c);
     CoordinatorInput i = nominal(600); i.vertical_speed_mps = -3; i.servo_valid = false;
@@ -310,6 +386,9 @@ int main() {
     RUN_TEST(reboot_restores_calibration_and_flare_stays_disabled);
     RUN_TEST(landing_closes_log_once_and_neutralizes);
     RUN_TEST(communications_loss_has_no_control_input);
+    RUN_TEST(lora_remote_manual_commands_only_in_descent);
+    RUN_TEST(lora_remote_can_steer_without_target_after_stabilization);
+    RUN_TEST(lora_remote_cannot_override_failsafe);
     RUN_TEST(failsafe_can_land_but_failure_remains_recorded);
     RUN_TEST(barometer_fallback_can_confirm_landing_in_final_approach);
     return UNITY_END();

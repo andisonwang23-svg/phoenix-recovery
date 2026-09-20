@@ -314,7 +314,7 @@ void WiFiManager::pushEvents() {
 }
 
 String WiFiManager::getStatusJSON() {
-    char buf[3072];
+    char buf[4096];
     const char* state_name = logic::flightStateName(state_->flight_state);
     const char* guidance_name = logic::guidanceModeName(state_->guidance_mode);
     const char* fail_name = logic::failCodeName(state_->failure_code);
@@ -330,6 +330,16 @@ String WiFiManager::getStatusJSON() {
         "\"wifi_clients\":%d,"
         "\"lora_rssi\":%d,"
         "\"lora_snr\":%.1f,"
+        "\"lora_remote_enabled\":%s,"
+        "\"lora_remote_link_active\":%s,"
+        "\"lora_remote_allowed\":%s,"
+        "\"lora_remote_manual_active\":%s,"
+        "\"lora_remote_age_ms\":%u,"
+        "\"lora_remote_sequence\":%u,"
+        "\"lora_remote_accepted\":%u,"
+        "\"lora_remote_rejected\":%u,"
+        "\"lora_remote_servo1_command\":%.3f,"
+        "\"lora_remote_servo2_command\":%.3f,"
         "\"max_altitude_agl\":%.1f,"
         "\"left_servo_command\":%.3f,"
         "\"right_servo_command\":%.3f,"
@@ -367,6 +377,16 @@ String WiFiManager::getStatusJSON() {
         WiFi.softAPgetStationNum(),
         state_->lora_rssi,
         state_->lora_snr,
+        state_->lora_remote_enabled ? "true" : "false",
+        state_->lora_remote_link_active ? "true" : "false",
+        state_->lora_remote_command_allowed ? "true" : "false",
+        state_->lora_remote_manual_active ? "true" : "false",
+        state_->lora_remote_command_age_ms,
+        state_->lora_remote_sequence,
+        state_->lora_remote_accepted_count,
+        state_->lora_remote_rejected_count,
+        state_->lora_remote_servo1_command,
+        state_->lora_remote_servo2_command,
         state_->max_altitude_agl_m,
         state_->left_servo_command,
         state_->right_servo_command,
@@ -797,6 +817,11 @@ h1 { font-size:1.5rem; font-weight:600; margin-bottom:8px; }
 <div class="row"><span class="label">IMU</span><span id="imu" class="value err">INIT</span></div>
 <div class="row"><span class="label">Barometer</span><span id="baro" class="value err">INIT</span></div>
 <div class="row"><span class="label">LoRa</span><span id="lora" class="value">-- dBm</span></div>
+<div class="row"><span class="label">Remote LoRa Link</span><span id="rlink" class="value err">NO</span></div>
+<div class="row"><span class="label">Remote Allowed</span><span id="rallow" class="value err">NO</span></div>
+<div class="row"><span class="label">Remote Manual</span><span id="rmanual" class="value">OFF</span></div>
+<div class="row"><span class="label">Remote Age</span><span id="rage" class="value">-- ms</span></div>
+<div class="row"><span class="label">Remote Servo 1/2</span><span id="rcmds" class="value">0.000 / 0.000</span></div>
 </div>
 
 <div class="card">
@@ -876,6 +901,14 @@ evt.addEventListener('telemetry', e => {
     document.getElementById('heap').textContent = d.free_heap_kb+' KB';
     document.getElementById('clients').textContent = d.wifi_clients;
     document.getElementById('lora').textContent = d.lora_rssi+' dBm / '+d.lora_snr+' dB';
+    document.getElementById('rlink').textContent = d.lora_remote_link_active ? 'YES' : 'NO';
+    document.getElementById('rlink').className = 'value '+(d.lora_remote_link_active?'ok':'err');
+    document.getElementById('rallow').textContent = d.lora_remote_allowed ? 'YES' : 'NO';
+    document.getElementById('rallow').className = 'value '+(d.lora_remote_allowed?'ok':'err');
+    document.getElementById('rmanual').textContent = d.lora_remote_manual_active ? 'ACTIVE' : 'OFF';
+    document.getElementById('rmanual').className = 'value '+(d.lora_remote_manual_active?'warn':'');
+    document.getElementById('rage').textContent = d.lora_remote_age_ms > 1000000 ? '-- ms' : d.lora_remote_age_ms+' ms';
+    document.getElementById('rcmds').textContent = d.lora_remote_servo1_command.toFixed(3)+' / '+d.lora_remote_servo2_command.toFixed(3);
     document.getElementById('maxalt').textContent = d.max_altitude_agl.toFixed(1)+' m';
     document.getElementById('lcmd').textContent = d.left_servo_command.toFixed(3);
     document.getElementById('rcmd').textContent = d.right_servo_command.toFixed(3);
@@ -1277,7 +1310,14 @@ async function testSensor(sensor) {
             const j = await r.json();
             document.getElementById('sensorStatus').textContent = JSON.stringify({
                 rssi_dbm: j.lora_rssi,
-                snr_db: j.lora_snr
+                snr_db: j.lora_snr,
+                remote_enabled: j.lora_remote_enabled,
+                remote_link_active: j.lora_remote_link_active,
+                remote_allowed_now: j.lora_remote_allowed,
+                remote_manual_active: j.lora_remote_manual_active,
+                remote_age_ms: j.lora_remote_age_ms,
+                accepted_commands: j.lora_remote_accepted,
+                rejected_commands: j.lora_remote_rejected
             }, null, 2);
             return;
         }

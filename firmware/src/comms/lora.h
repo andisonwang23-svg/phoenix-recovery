@@ -8,8 +8,20 @@
 #include "config.h"
 #include "vehicle_state.h"
 #include "telemetry/telemetry_packet.h"
+#include "comms/lora_remote_protocol.h"
 
 namespace comms {
+
+struct LoRaRemoteCommand {
+    LoRaRemoteCommandType type = LoRaRemoteCommandType::PING;
+    uint16_t sequence = 0;
+    float servo1_command = 0.0f;
+    float servo2_command = 0.0f;
+    double target_latitude = 0.0;
+    double target_longitude = 0.0;
+    int16_t rssi = 0;
+    float snr = 0.0f;
+};
 
 class LoRaTelemetry {
 public:
@@ -21,6 +33,9 @@ public:
 
     // Send telemetry packet
     bool send(const telemetry::TelemetryPacketV1& packet);
+
+    // Poll for one supervised ground-station command from the second LoRa.
+    bool pollRemoteCommand(LoRaRemoteCommand& command);
 
     // Check if radio is healthy
     bool isHealthy() const { return initialized_; }

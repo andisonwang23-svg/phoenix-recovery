@@ -205,6 +205,22 @@ constexpr uint32_t CONFIG_VERSION = 3;
 constexpr uint32_t MAIN_LOOP_INTERVAL_MS = 10; // 100 Hz main loop
 
 // ---------------------------------------------------------------------------
+// LoRa remote-control supervision
+// ---------------------------------------------------------------------------
+// A second Heltec LoRa board may act as a computer-side bridge. These packets
+// are only accepted as supervised descent commands; powered ascent and failsafe
+// remain neutral-only.
+constexpr bool     LORA_REMOTE_CONTROL_ENABLED = true;
+constexpr uint32_t LORA_REMOTE_POLL_INTERVAL_MS = 80;
+constexpr uint32_t LORA_REMOTE_RX_TIMEOUT_MS = 3;
+constexpr uint32_t LORA_REMOTE_COMMAND_TIMEOUT_MS = 750;
+constexpr float    LORA_REMOTE_MAX_BRAKE_COMMAND = 0.25f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr bool     LORA_REMOTE_ALLOW_WITHOUT_TARGET = true;
+constexpr bool     LORA_BENCH_SERVO_TEST_ENABLED = true;
+constexpr float    LORA_BENCH_MAX_SERVO_COMMAND = 0.08f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr uint32_t LORA_BENCH_SERVO_TIMEOUT_MS = 600;
+
+// ---------------------------------------------------------------------------
 // Servo channel aliases
 // ---------------------------------------------------------------------------
 constexpr int SERVO_LEFT_CHANNEL = PIN_SERVO_LEFT;
@@ -213,6 +229,9 @@ constexpr int SERVO_RIGHT_CHANNEL = PIN_SERVO_RIGHT;
 // ---------------------------------------------------------------------------
 // WiFi AP configuration
 // ---------------------------------------------------------------------------
+// Payload Wi-Fi is disabled in flight hardware. Configuration and monitoring
+// are provided by the separate PHOENIX-GROUND LoRa dashboard.
+constexpr bool PAYLOAD_WIFI_ENABLED = false;
 constexpr const char* WIFI_AP_SSID = "PHOENIX-RECOVERY";
 constexpr const char* WIFI_AP_PASS = "parafoil";
 constexpr uint8_t WIFI_AP_CHANNEL = 1;

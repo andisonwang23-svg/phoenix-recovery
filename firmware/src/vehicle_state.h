@@ -94,6 +94,20 @@ struct VehicleState {
     uint32_t telemetry_sequence = 0;
     uint32_t telemetry_ack_count = 0;
 
+    // LoRa remote-control supervision. A second LoRa can request descent
+    // commands, but the flight coordinator still decides whether they are safe.
+    bool lora_remote_enabled = false;
+    bool lora_remote_link_active = false;
+    bool lora_remote_command_allowed = false;
+    bool lora_remote_manual_active = false;
+    uint32_t lora_remote_last_rx_ms = 0;
+    uint32_t lora_remote_command_age_ms = 0;
+    uint16_t lora_remote_sequence = 0;
+    uint32_t lora_remote_accepted_count = 0;
+    uint32_t lora_remote_rejected_count = 0;
+    float lora_remote_servo1_command = 0.0f;
+    float lora_remote_servo2_command = 0.0f;
+
     // Debug / event log indices
     uint16_t event_log_head = 0;
     uint16_t event_log_tail = 0;
