@@ -59,6 +59,9 @@ void updateHealth();
 void logFlightData();
 void printStatus();
 void updateLoRaRemoteControl();
+void updateDropTestRecording();
+bool armDropTest(uint32_t now);
+void abortDropTest(uint32_t now, const char* reason);
 bool saveRemoteTarget(double latitude, double longitude);
 void loadPersistedTarget();
 bool remoteControlAllowedForState(logic::FlightState state);
@@ -71,6 +74,11 @@ static float lora_remote_servo1_command = 0.0f;
 static float lora_remote_servo2_command = 0.0f;
 static bool lora_bench_servo_active = false;
 static uint32_t lora_bench_servo_expires_ms = 0;
+static float drop_test_arm_altitude_m = 0.0f;
+static uint32_t drop_test_release_candidate_since_ms = 0;
+static uint32_t drop_test_landing_candidate_since_ms = 0;
+static uint32_t drop_test_post_landing_until_ms = 0;
+static uint16_t next_drop_test_id = 1;
 
 static logic::CoordinatorConfig coordinatorConfig() {
     logic::CoordinatorConfig c;
@@ -228,6 +236,8 @@ void loop() {
         vehicle.max_altitude_agl_m = vehicle.altitude_agl_m;
     }
 
+    updateDropTestRecording();
+
     // ---- Flight coordinator: sole flight-state and brake-request owner ----
     logic::CoordinatorInput coordinator_in;
     coordinator_in.now_ms = now;
@@ -270,6 +280,10 @@ void loop() {
     vehicle.distance_to_target_m = command.distance_to_target_m;
     vehicle.requested_left_servo_command = command.requested_left_brake;
     vehicle.requested_right_servo_command = command.requested_right_brake;
+    if (vehicle.drop_test_neutral_lock) {
+        vehicle.requested_left_servo_command = 0.0f;
+        vehicle.requested_right_servo_command = 0.0f;
+    }
     const logic::TransitionTimestamps& times = coordinator.timestamps();
     vehicle.state_entry_ms = times.state_entry_ms;
     vehicle.launch_ms = times.launch_ms;
@@ -327,7 +341,8 @@ void loop() {
 
     // Failsafe directly commands immediate neutral and no later branch can
     // overwrite it. Ground tests are permitted only in pad-safe states.
-    if (command.failsafe_active || command.state == logic::FlightState::LANDED) {
+    if (command.failsafe_active || command.state == logic::FlightState::LANDED ||
+        vehicle.drop_test_neutral_lock) {
         servos.emergencyNeutral();
     } else if (lora_bench_servo_active &&
                (command.state == logic::FlightState::PAD_SAFE ||
@@ -409,6 +424,151 @@ bool remoteControlAllowedForState(logic::FlightState state) {
            state == logic::FlightState::FINAL_APPROACH;
 }
 
+bool armDropTest(uint32_t now) {
+    if (!cfg::DROP_TEST_MODE_ENABLED) return false;
+    const bool terminal =
+        vehicle.drop_test_state == phoenix::DropTestState::IDLE ||
+        vehicle.drop_test_state == phoenix::DropTestState::TEST_COMPLETE ||
+        vehicle.drop_test_state == phoenix::DropTestState::TEST_ABORTED;
+    const bool ready = terminal &&
+        vehicle.imu_valid &&
+        vehicle.barometer_valid &&
+        servos.isHealthy();
+    if (!ready) {
+        vehicle.drop_test_rejected_count++;
+        ring_buf.pushEvent("DROP_TEST_ARM_REJECTED");
+        flash_log.logEvent("DROP_TEST_ARM_REJECTED");
+        return false;
+    }
+
+    if (!flash_log.isLogging()) {
+        flash_log.startFlightLog();
+    }
+    vehicle.drop_test_id = next_drop_test_id++;
+    if (next_drop_test_id == 0) next_drop_test_id = 1;
+    vehicle.drop_test_state = phoenix::DropTestState::ARMED_RECORDING;
+    vehicle.drop_test_recording = true;
+    vehicle.drop_test_neutral_lock = cfg::DROP_TEST_NEUTRAL_LOCK_ENABLED;
+    vehicle.drop_test_armed_ms = now;
+    vehicle.armed = true;
+    vehicle.armed_ms = now;
+    vehicle.drop_test_release_onset_ms = 0;
+    vehicle.drop_test_release_confirm_ms = 0;
+    vehicle.drop_test_landing_candidate_ms = 0;
+    vehicle.drop_test_landing_confirm_ms = 0;
+    vehicle.drop_test_log_closed_ms = 0;
+    drop_test_arm_altitude_m = vehicle.altitude_agl_m;
+    drop_test_release_candidate_since_ms = 0;
+    drop_test_landing_candidate_since_ms = 0;
+    drop_test_post_landing_until_ms = 0;
+
+    servos.emergencyNeutral();
+    ring_buf.pushEvent("DROP_TEST_ARMED");
+    flash_log.logEvent("DROP_TEST_ARMED");
+    flash_log.logTelemetry(vehicle);
+    return true;
+}
+
+void abortDropTest(uint32_t now, const char* reason) {
+    lora_remote_manual_active = false;
+    lora_bench_servo_active = false;
+    lora_remote_servo1_command = 0.0f;
+    lora_remote_servo2_command = 0.0f;
+    servos.emergencyNeutral();
+
+    if (vehicle.drop_test_recording) {
+        vehicle.drop_test_state = phoenix::DropTestState::TEST_ABORTED;
+        vehicle.drop_test_recording = false;
+        vehicle.drop_test_neutral_lock = true;
+        vehicle.drop_test_log_closed_ms = now;
+        ring_buf.pushEvent(reason);
+        flash_log.logEvent(reason);
+        flash_log.logTelemetry(vehicle);
+        if (flash_log.isLogging()) flash_log.endFlightLog();
+    }
+}
+
+void updateDropTestRecording() {
+    if (!vehicle.drop_test_recording) return;
+    const uint32_t now = vehicle.timestamp_ms;
+    if (now - vehicle.drop_test_armed_ms >= cfg::DROP_TEST_MAX_DURATION_MS) {
+        vehicle.drop_test_state = phoenix::DropTestState::TEST_COMPLETE;
+        vehicle.drop_test_recording = false;
+        vehicle.drop_test_neutral_lock = true;
+        vehicle.drop_test_log_closed_ms = now;
+        ring_buf.pushEvent("DROP_TEST_TIMEOUT_CLOSED");
+        flash_log.logEvent("DROP_TEST_TIMEOUT_CLOSED");
+        flash_log.logTelemetry(vehicle);
+        if (flash_log.isLogging()) flash_log.endFlightLog();
+        return;
+    }
+
+    if (vehicle.drop_test_state == phoenix::DropTestState::ARMED_RECORDING) {
+        const float altitude_loss_m = drop_test_arm_altitude_m - vehicle.altitude_agl_m;
+        const bool release_candidate =
+            vehicle.barometer_valid &&
+            vehicle.vertical_speed_mps <= cfg::DROP_TEST_RELEASE_SPEED_MPS &&
+            altitude_loss_m >= cfg::DROP_TEST_RELEASE_ALT_LOSS_M;
+        if (release_candidate) {
+            if (drop_test_release_candidate_since_ms == 0) {
+                drop_test_release_candidate_since_ms = now;
+                vehicle.drop_test_release_onset_ms = now;
+                ring_buf.pushEvent("DROP_TEST_RELEASE_ONSET");
+                flash_log.logEvent("DROP_TEST_RELEASE_ONSET");
+            }
+            if (now - drop_test_release_candidate_since_ms >= cfg::DROP_TEST_RELEASE_CONFIRM_MS) {
+                vehicle.drop_test_state = phoenix::DropTestState::DROP_CONFIRMED;
+                vehicle.drop_test_release_confirm_ms = now;
+                ring_buf.pushEvent("DROP_TEST_RELEASE_CONFIRMED");
+                flash_log.logEvent("DROP_TEST_RELEASE_CONFIRMED");
+            }
+        } else {
+            drop_test_release_candidate_since_ms = 0;
+        }
+    }
+
+    if (vehicle.drop_test_state == phoenix::DropTestState::DROP_CONFIRMED ||
+        vehicle.drop_test_state == phoenix::DropTestState::LANDING_CONFIRM) {
+        const bool landing_candidate =
+            vehicle.barometer_valid &&
+            fabs(vehicle.vertical_speed_mps) <= cfg::DROP_TEST_LANDING_VS_MPS &&
+            (!vehicle.imu_valid || vehicle.angular_rate_dps <= cfg::DROP_TEST_LANDING_ANGULAR_RATE_DPS);
+        if (landing_candidate) {
+            if (drop_test_landing_candidate_since_ms == 0) {
+                drop_test_landing_candidate_since_ms = now;
+                vehicle.drop_test_landing_candidate_ms = now;
+                vehicle.drop_test_state = phoenix::DropTestState::LANDING_CONFIRM;
+                ring_buf.pushEvent("DROP_TEST_LANDING_CANDIDATE");
+                flash_log.logEvent("DROP_TEST_LANDING_CANDIDATE");
+            }
+            if (now - drop_test_landing_candidate_since_ms >= cfg::DROP_TEST_LANDING_CONFIRM_MS &&
+                vehicle.drop_test_landing_confirm_ms == 0) {
+                vehicle.drop_test_landing_confirm_ms = now;
+                drop_test_post_landing_until_ms = now + cfg::DROP_TEST_POST_LANDING_RECORD_MS;
+                ring_buf.pushEvent("DROP_TEST_LANDING_CONFIRMED");
+                flash_log.logEvent("DROP_TEST_LANDING_CONFIRMED");
+            }
+        } else if (vehicle.drop_test_landing_confirm_ms == 0) {
+            drop_test_landing_candidate_since_ms = 0;
+            if (vehicle.drop_test_state == phoenix::DropTestState::LANDING_CONFIRM) {
+                vehicle.drop_test_state = phoenix::DropTestState::DROP_CONFIRMED;
+            }
+        }
+    }
+
+    if (drop_test_post_landing_until_ms != 0 &&
+        static_cast<int32_t>(now - drop_test_post_landing_until_ms) >= 0) {
+        vehicle.drop_test_state = phoenix::DropTestState::TEST_COMPLETE;
+        vehicle.drop_test_recording = false;
+        vehicle.drop_test_neutral_lock = true;
+        vehicle.drop_test_log_closed_ms = now;
+        ring_buf.pushEvent("DROP_TEST_COMPLETE");
+        flash_log.logEvent("DROP_TEST_COMPLETE");
+        flash_log.logTelemetry(vehicle);
+        if (flash_log.isLogging()) flash_log.endFlightLog();
+    }
+}
+
 bool saveRemoteTarget(double latitude, double longitude) {
     if (!isfinite(latitude) || !isfinite(longitude)) return false;
     if (latitude < -90.0 || latitude > 90.0) return false;
@@ -480,6 +640,7 @@ void updateLoRaRemoteControl() {
     vehicle.lora_remote_sequence = remote.sequence;
     vehicle.lora_rssi = static_cast<int8_t>(remote.rssi);
     vehicle.lora_snr = remote.snr;
+    vehicle.drop_test_last_ground_command_ms = now;
 
     switch (remote.type) {
         case comms::LoRaRemoteCommandType::PING:
@@ -535,6 +696,29 @@ void updateLoRaRemoteControl() {
             flash_log.logEvent("LORA_BENCH_SERVO_ACTIVE");
             break;
         }
+        case comms::LoRaRemoteCommandType::ARM_DROP_TEST:
+            if (armDropTest(now)) {
+                vehicle.lora_remote_accepted_count++;
+            } else {
+                vehicle.lora_remote_rejected_count++;
+            }
+            break;
+        case comms::LoRaRemoteCommandType::ABORT_DROP_TEST:
+            abortDropTest(now, "DROP_TEST_ABORTED_BY_GROUND");
+            vehicle.lora_remote_accepted_count++;
+            ring_buf.pushEvent("LORA_ABORT_NEUTRAL");
+            flash_log.logEvent("LORA_ABORT_NEUTRAL");
+            break;
+        case comms::LoRaRemoteCommandType::REQUEST_LOG_INDEX:
+            vehicle.lora_remote_accepted_count++;
+            ring_buf.pushEvent("LORA_LOG_INDEX_REQUEST");
+            flash_log.logEvent("LORA_LOG_INDEX_REQUEST");
+            break;
+        case comms::LoRaRemoteCommandType::CANCEL_LOG_TRANSFER:
+            vehicle.lora_remote_accepted_count++;
+            ring_buf.pushEvent("LORA_LOG_TRANSFER_CANCEL");
+            flash_log.logEvent("LORA_LOG_TRANSFER_CANCEL");
+            break;
         case comms::LoRaRemoteCommandType::MANUAL_BRAKE: {
             const bool safe_state = remoteControlAllowedForState(vehicle.flight_state) &&
                 vehicle.failure_code == logic::FailCode::FAIL_NONE &&

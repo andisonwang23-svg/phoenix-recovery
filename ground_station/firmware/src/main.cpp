@@ -95,6 +95,13 @@ struct TelemetrySnapshot {
     bool gps_valid = false;
     bool imu_valid = false;
     bool baro_valid = false;
+    phoenix::DropTestState drop_test_state = phoenix::DropTestState::IDLE;
+    bool drop_test_recording = false;
+    bool drop_test_neutral_lock = false;
+    uint16_t drop_test_id = 0;
+    uint32_t drop_test_armed_ms = 0;
+    uint32_t drop_test_release_ms = 0;
+    uint32_t drop_test_landing_ms = 0;
     int16_t rssi = 0;
     float snr = 0.0f;
 };
@@ -251,6 +258,13 @@ void pollTelemetry() {
     telemetry.gps_valid = packet.gps_valid != 0 || packet.gps_fix_valid != 0;
     telemetry.imu_valid = packet.imu_valid != 0;
     telemetry.baro_valid = packet.baro_valid != 0;
+    telemetry.drop_test_state = static_cast<phoenix::DropTestState>(packet.drop_test_state);
+    telemetry.drop_test_recording = (packet.drop_test_flags & 1U) != 0;
+    telemetry.drop_test_neutral_lock = (packet.drop_test_flags & 2U) != 0;
+    telemetry.drop_test_id = packet.drop_test_id;
+    telemetry.drop_test_armed_ms = packet.drop_test_armed_ms;
+    telemetry.drop_test_release_ms = packet.drop_test_release_ms;
+    telemetry.drop_test_landing_ms = packet.drop_test_landing_ms;
     telemetry.rssi = radio.getRSSI();
     telemetry.snr = radio.getSNR();
 }
@@ -281,6 +295,8 @@ void printHelp() {
     Serial.println("  help");
     Serial.println("  ping");
     Serial.println("  status                      shows payload LoRa telemetry link");
+    Serial.println("  armdrop                     arm payload-owned inert drop recording");
+    Serial.println("  abortdrop                   abort drop recording and command neutral");
     Serial.println("  bench <1|2>                 small timed PAD_SAFE servo test");
     Serial.println("  neutral");
     Serial.println("  servo <servo1> <servo2>     values -1.00..+1.00; rocket clamps again");
@@ -354,6 +370,12 @@ void handleLine(String line) {
         sendCommand(comms::LoRaRemoteCommandType::BENCH_SERVO, 0.0f, 0.08f);
     } else if (line == "ping") {
         sendCommand(comms::LoRaRemoteCommandType::PING);
+    } else if (line == "armdrop") {
+        sendCommand(comms::LoRaRemoteCommandType::ARM_DROP_TEST);
+    } else if (line == "abortdrop") {
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        sendCommand(comms::LoRaRemoteCommandType::ABORT_DROP_TEST);
     } else if (line == "neutral") {
         manual_hold.active = false;
         manual_hold.bench_mode = false;
@@ -397,7 +419,7 @@ String statusJson() {
     const uint32_t now = millis();
     const uint32_t telemetry_age = telemetry.rx_ms == 0 ? UINT32_MAX : now - telemetry.rx_ms;
     const bool telemetry_fresh = telemetry.valid && telemetry_age <= TELEMETRY_STALE_MS;
-    char buf[3072];
+    char buf[4096];
     snprintf(buf, sizeof(buf),
              "{"
              "\"wifi_ok\":%s,"
@@ -446,7 +468,14 @@ String statusJson() {
                 "\"satellites\":%u,"
                 "\"gps_valid\":%s,"
                 "\"imu_valid\":%s,"
-                "\"baro_valid\":%s"
+                "\"baro_valid\":%s,"
+                "\"drop_test_state\":\"%s\","
+                "\"drop_test_recording\":%s,"
+                "\"drop_test_neutral_lock\":%s,"
+                "\"drop_test_id\":%u,"
+                "\"drop_test_armed_ms\":%lu,"
+                "\"drop_test_release_ms\":%lu,"
+                "\"drop_test_landing_ms\":%lu"
              "}"
              "}",
              wifi_ok ? "true" : "false",
@@ -494,7 +523,14 @@ String statusJson() {
              telemetry.satellites,
              telemetry.gps_valid ? "true" : "false",
              telemetry.imu_valid ? "true" : "false",
-             telemetry.baro_valid ? "true" : "false");
+             telemetry.baro_valid ? "true" : "false",
+             phoenix::dropTestStateName(telemetry.drop_test_state),
+             telemetry.drop_test_recording ? "true" : "false",
+             telemetry.drop_test_neutral_lock ? "true" : "false",
+             telemetry.drop_test_id,
+             static_cast<unsigned long>(telemetry.drop_test_armed_ms),
+             static_cast<unsigned long>(telemetry.drop_test_release_ms),
+             static_cast<unsigned long>(telemetry.drop_test_landing_ms));
     return String(buf);
 }
 
@@ -509,6 +545,16 @@ void handleCommandApi() {
 
     if (type == "ping") {
         ok = sendCommand(comms::LoRaRemoteCommandType::PING);
+    } else if (type == "armdrop") {
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        ok = sendCommand(comms::LoRaRemoteCommandType::ARM_DROP_TEST);
+    } else if (type == "abortdrop") {
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        ok = sendCommand(comms::LoRaRemoteCommandType::ABORT_DROP_TEST);
+    } else if (type == "logindex") {
+        ok = sendCommand(comms::LoRaRemoteCommandType::REQUEST_LOG_INDEX);
     } else if (type == "neutral") {
         manual_hold.active = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::NEUTRAL);
@@ -635,6 +681,19 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
     </article>
 
     <article class="card">
+      <div class="cardHead"><h2>Drop Test Recording</h2><span id="dropGate" class="tiny">PAYLOAD OWNED</span></div>
+      <div class="notice">Arm before release. The payload records locally and keeps servos neutral; LoRa timing is used only for supervision.</div>
+      <div class="rows">
+        <div class="row"><span class="k">Drop state</span><span id="dropState" class="v">--</span></div>
+        <div class="row"><span class="k">Test ID</span><span id="dropId" class="v">--</span></div>
+        <div class="row"><span class="k">Event times</span><span id="dropTimes" class="v">--</span></div>
+      </div>
+      <div class="commandRow"><button class="primary" onclick="armDrop()">Arm Drop Test</button><button class="danger" onclick="abortDrop()">Abort And Neutral</button></div>
+      <button class="full" onclick="requestLogIndex()">Request Log Index</button>
+      <div id="dropStatus" class="status">Waiting for payload telemetry.</div>
+    </article>
+
+    <article class="card">
       <div class="cardHead"><h2>Landing Target</h2><span class="tiny">LORA UPDATE</span></div>
       <div class="field"><label>Latitude</label><input id="lat" type="number" step="0.0000001" placeholder="37.1234567"></div>
       <div class="field"><label>Longitude</label><input id="lon" type="number" step="0.0000001" placeholder="-122.1234567"></div>
@@ -679,6 +738,9 @@ function zeroSliders(){el('s1').value=0;el('s2').value=0;updateSliders()}
 function neutral(){zeroSliders();command('type=neutral')}
 function ping(){command('type=ping','targetStatus')}
 function bench(n){if(confirm('Confirm inert, unloaded bench test for Servo '+n+'?'))command('type=bench&servo='+n,'benchStatus')}
+function armDrop(){if(confirm('Arm payload-owned drop-test recording? Servos will stay neutral.'))command('type=armdrop','dropStatus')}
+function abortDrop(){if(confirm('Abort drop recording and command neutral?'))command('type=abortdrop','dropStatus')}
+function requestLogIndex(){command('type=logindex','dropStatus')}
 function disableRemote(){ if(confirm('Disable rocket LoRa remote control until rocket reboot?')) command('type=disable') }
 function sendTarget(){command('type=target&lat='+encodeURIComponent(el('lat').value)+'&lon='+encodeURIComponent(el('lon').value),'targetStatus')}
 function updateSliders(){el('s1v').textContent=Math.round(+el('s1').value*100)+'%';el('s2v').textContent=Math.round(+el('s2').value*100)+'%'}
@@ -696,6 +758,10 @@ async function refresh(){
     el('course').textContent=num(t.gps_course_deg)+'° / '+num(t.target_bearing_deg)+'°';el('heading').textContent=num(t.heading_error_deg)+'°';el('vspeed').textContent=num(t.vertical_speed_mps,2)+' m/s';
     el('gpsBadge').textContent=t.gps_valid?(t.satellites+' SATELLITES · FIX'):(t.satellites+' SATELLITES · NO FIX');
     health(el('gpsSensor'),el('gpsText'),t.gps_valid,t.gps_valid?'FIX · '+t.satellites+' SAT':'NO FIX');health(el('imuSensor'),el('imuText'),t.imu_valid,t.imu_valid?'HEALTHY':'ERROR');health(el('baroSensor'),el('baroText'),t.baro_valid,t.baro_valid?'HEALTHY':'ERROR');
+    el('dropState').textContent=t.drop_test_state;el('dropId').textContent=t.drop_test_id?('#'+t.drop_test_id):'--';
+    el('dropTimes').textContent='arm '+(t.drop_test_armed_ms||'--')+' · release '+(t.drop_test_release_ms||'--')+' · landing '+(t.drop_test_landing_ms||'--');
+    el('dropGate').textContent=t.drop_test_neutral_lock?'NEUTRAL LOCK':'PAYLOAD OWNED';el('dropGate').className='tiny '+(t.drop_test_recording?'ok':'warn');
+    el('dropStatus').textContent=t.drop_test_recording?'Payload recording locally. Dashboard may disconnect safely.':'Drop recorder idle or closed.';
     el('failsafe').textContent=t.failsafe==='NONE'?'FAILSAFE CLEAR':'FAILSAFE '+t.failsafe;el('failsafe').className='tiny '+(t.failsafe==='NONE'?'ok':'bad');
     el('roll').textContent=num(t.roll_deg)+'°';el('pitch').textContent=num(t.pitch_deg)+'°';el('yaw').textContent=num(t.yaw_deg)+'°';
     el('servo1Text').textContent=Math.round(t.servo1_cmd*100)+'% · '+t.servo1_us+' µs';el('servo2Text').textContent=Math.round(t.servo2_cmd*100)+'% · '+t.servo2_us+' µs';

@@ -21,7 +21,11 @@ enum class LoRaRemoteCommandType : uint8_t {
     MANUAL_BRAKE = 3,
     SET_TARGET = 4,
     DISABLE_REMOTE = 5,
-    BENCH_SERVO = 6
+    BENCH_SERVO = 6,
+    ARM_DROP_TEST = 7,
+    ABORT_DROP_TEST = 8,
+    REQUEST_LOG_INDEX = 9,
+    CANCEL_LOG_TRANSFER = 10
 };
 
 struct __attribute__((packed)) LoRaRemoteCommandPacket {
@@ -67,6 +71,10 @@ inline const char* loraRemoteCommandName(LoRaRemoteCommandType type) {
         case LoRaRemoteCommandType::SET_TARGET: return "SET_TARGET";
         case LoRaRemoteCommandType::DISABLE_REMOTE: return "DISABLE_REMOTE";
         case LoRaRemoteCommandType::BENCH_SERVO: return "BENCH_SERVO";
+        case LoRaRemoteCommandType::ARM_DROP_TEST: return "ARM_DROP_TEST";
+        case LoRaRemoteCommandType::ABORT_DROP_TEST: return "ABORT_DROP_TEST";
+        case LoRaRemoteCommandType::REQUEST_LOG_INDEX: return "REQUEST_LOG_INDEX";
+        case LoRaRemoteCommandType::CANCEL_LOG_TRANSFER: return "CANCEL_LOG_TRANSFER";
     }
     return "UNKNOWN";
 }

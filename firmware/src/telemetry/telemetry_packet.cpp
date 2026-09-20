@@ -72,6 +72,13 @@ void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& pack
     packet.free_heap_kb = static_cast<uint16_t>(state.free_heap_bytes / 1024);
     packet.lora_rssi = static_cast<uint16_t>(state.lora_rssi + 200); // offset for unsigned
     packet.lora_snr_x10 = static_cast<int16_t>(state.lora_snr * 10);
+    packet.drop_test_state = static_cast<uint8_t>(state.drop_test_state);
+    packet.drop_test_flags = (state.drop_test_recording ? 1U : 0U) |
+                             (state.drop_test_neutral_lock ? 2U : 0U);
+    packet.drop_test_id = state.drop_test_id;
+    packet.drop_test_armed_ms = state.drop_test_armed_ms;
+    packet.drop_test_release_ms = state.drop_test_release_confirm_ms;
+    packet.drop_test_landing_ms = state.drop_test_landing_confirm_ms;
 
     // CRC (compute over everything except CRC field)
     size_t crc_len = sizeof(TelemetryPacketV1) - sizeof(uint16_t);

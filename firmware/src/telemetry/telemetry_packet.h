@@ -75,6 +75,14 @@ struct TelemetryPacketV1 {
     uint16_t lora_rssi = 0;
     int16_t  lora_snr_x10 = 0;       // dB * 10
 
+    // Inert drop-test recording state
+    uint8_t  drop_test_state = 0;     // phoenix::DropTestState
+    uint8_t  drop_test_flags = 0;     // bit0 recording, bit1 neutral lock
+    uint16_t drop_test_id = 0;
+    uint32_t drop_test_armed_ms = 0;
+    uint32_t drop_test_release_ms = 0;
+    uint32_t drop_test_landing_ms = 0;
+
     // CRC (CCITT-16)
     uint16_t crc = 0;
 };

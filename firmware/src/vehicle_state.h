@@ -9,6 +9,27 @@
 
 namespace phoenix {
 
+enum class DropTestState : uint8_t {
+    IDLE = 0,
+    ARMED_RECORDING = 1,
+    DROP_CONFIRMED = 2,
+    LANDING_CONFIRM = 3,
+    TEST_COMPLETE = 4,
+    TEST_ABORTED = 5
+};
+
+inline const char* dropTestStateName(DropTestState state) {
+    switch (state) {
+        case DropTestState::IDLE: return "IDLE";
+        case DropTestState::ARMED_RECORDING: return "ARMED_RECORDING";
+        case DropTestState::DROP_CONFIRMED: return "DROP_CONFIRMED";
+        case DropTestState::LANDING_CONFIRM: return "LANDING_CONFIRM";
+        case DropTestState::TEST_COMPLETE: return "TEST_COMPLETE";
+        case DropTestState::TEST_ABORTED: return "TEST_ABORTED";
+    }
+    return "UNKNOWN";
+}
+
 // ---------------------------------------------------------------------------
 // VehicleState — all flight data in one place
 // ---------------------------------------------------------------------------
@@ -141,6 +162,21 @@ struct VehicleState {
     bool degraded_guidance = false;
     bool launch_readiness_ok = false;
     bool preflight_launch_warning = false;
+
+    // Inert drop-test recording state. The payload owns this timeline; LoRa
+    // may arm or abort it, but LoRa receive time is never used as sample time.
+    DropTestState drop_test_state = DropTestState::IDLE;
+    uint16_t drop_test_id = 0;
+    bool drop_test_recording = false;
+    bool drop_test_neutral_lock = false;
+    uint32_t drop_test_armed_ms = 0;
+    uint32_t drop_test_release_onset_ms = 0;
+    uint32_t drop_test_release_confirm_ms = 0;
+    uint32_t drop_test_landing_candidate_ms = 0;
+    uint32_t drop_test_landing_confirm_ms = 0;
+    uint32_t drop_test_log_closed_ms = 0;
+    uint32_t drop_test_last_ground_command_ms = 0;
+    uint32_t drop_test_rejected_count = 0;
 
     // Sensor update times (for staleness detection)
     uint32_t imu_last_update_ms = 0;

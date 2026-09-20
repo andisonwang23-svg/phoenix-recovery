@@ -116,3 +116,6 @@ Every injected fault must show its unique `FAIL_*` code on the ground station.
 
 Gate checklist: `docs/GROUND_TEST_CHECKLIST.md`. Low-height drop procedure:
 `docs/25_FOOT_DROP_TEST_PROCEDURE.md`.
+
+Drop-test recording mode and the ground dashboard arm flow are described in
+`docs/DROP_TEST_RECORDING.md`.

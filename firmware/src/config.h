@@ -205,6 +205,23 @@ constexpr uint32_t CONFIG_VERSION = 3;
 constexpr uint32_t MAIN_LOOP_INTERVAL_MS = 10; // 100 Hz main loop
 
 // ---------------------------------------------------------------------------
+// Inert drop-test mode
+// ---------------------------------------------------------------------------
+// A ground LoRa command can arm a payload-owned recording run before release.
+// During early inert tests, the payload keeps servos neutral and uses only
+// onboard sensor time for event markers.
+constexpr bool     DROP_TEST_MODE_ENABLED = true;
+constexpr bool     DROP_TEST_NEUTRAL_LOCK_ENABLED = true;
+constexpr float    DROP_TEST_RELEASE_SPEED_MPS = -1.0f;
+constexpr float    DROP_TEST_RELEASE_ALT_LOSS_M = 1.5f;
+constexpr uint32_t DROP_TEST_RELEASE_CONFIRM_MS = 400;
+constexpr float    DROP_TEST_LANDING_VS_MPS = 0.25f;
+constexpr float    DROP_TEST_LANDING_ANGULAR_RATE_DPS = 8.0f;
+constexpr uint32_t DROP_TEST_LANDING_CONFIRM_MS = 5000;
+constexpr uint32_t DROP_TEST_POST_LANDING_RECORD_MS = 10000;
+constexpr uint32_t DROP_TEST_MAX_DURATION_MS = 10UL * 60UL * 1000UL;
+
+// ---------------------------------------------------------------------------
 // LoRa remote-control supervision
 // ---------------------------------------------------------------------------
 // A second Heltec LoRa board may act as a computer-side bridge. These packets
