@@ -6,11 +6,13 @@ This mode lets the ground LoRa dashboard arm an inert drop-test recording before
 
 - The ground station dashboard at `http://192.168.8.1/` has a **Drop Test Recording** panel.
 - **Arm Drop Test** sends a LoRa `ARM_DROP_TEST` request to the payload.
-- The payload accepts the arm request only when IMU, barometer, and servos are healthy.
-- When accepted, the payload starts or continues flash logging, assigns a drop-test ID, records the arm time, and locks the servos neutral.
+- The payload accepts the arm request only when IMU, barometer, and servos are healthy, no failsafe is active, and any reported battery voltage is acceptable. GNSS is recorded as available or unavailable; it is not required for arming.
+- When accepted, the payload starts a fresh flash log, assigns a drop-test ID, records the arm time, and locks the servos neutral.
 - Release and landing markers are derived from onboard payload sensor time, not ground receive time.
 - **Abort And Neutral** sends `ABORT_DROP_TEST`, commands neutral, marks the test aborted, and closes the partial log when recording is active.
 - Telemetry reports drop-test state, test ID, arm time, release confirmation time, landing confirmation time, recording status, and neutral-lock status.
+- During active drop recording, payload telemetry is reduced to a low-rate preview. The raw test record is the onboard flash log, so LoRa delay or dashboard disconnects do not change the measured event timing.
+- The ground station blocks manual steering, target updates, and bench servo commands while drop recording is active to avoid extra LoRa traffic. Abort and neutral commands remain available.
 
 ## Operator Flow
 
@@ -22,6 +24,13 @@ This mode lets the ground LoRa dashboard arm an inert drop-test recording before
 6. Wait for telemetry to show `ARMED_RECORDING` and a nonzero test ID.
 7. Release the inert article without further dashboard interaction.
 8. After recovery, inspect the drop-test state and saved payload log.
+
+## Telemetry Delay Mitigation
+
+- The payload is the timing authority. Dashboard event times are payload milliseconds, not ground receive time.
+- LoRa is treated as preview/supervision during the drop test, not as the primary data recorder.
+- Active drop-test preview telemetry is throttled to `DROP_TEST_TELEMETRY_RATE_HZ`; idle drop-test status is throttled to `DROP_TEST_IDLE_TELEMETRY_RATE_HZ`.
+- Commands that can create avoidable radio traffic are rejected while recording is active.
 
 ## Safety Boundary
 

@@ -62,6 +62,7 @@ void updateLoRaRemoteControl();
 void updateDropTestRecording();
 bool armDropTest(uint32_t now);
 void abortDropTest(uint32_t now, const char* reason);
+uint32_t telemetryIntervalMs();
 bool saveRemoteTarget(double latitude, double longitude);
 void loadPersistedTarget();
 bool remoteControlAllowedForState(logic::FlightState state);
@@ -381,7 +382,7 @@ void loop() {
     }
 
     // ---- Telemetry (configurable rate) ----
-    if (now - last_telemetry_ms >= (1000 / cfg::TELEMETRY_RATE_HZ)) {
+    if (now - last_telemetry_ms >= telemetryIntervalMs()) {
         sendTelemetry();
         last_telemetry_ms = now;
     }
@@ -433,7 +434,9 @@ bool armDropTest(uint32_t now) {
     const bool ready = terminal &&
         vehicle.imu_valid &&
         vehicle.barometer_valid &&
-        servos.isHealthy();
+        servos.isHealthy() &&
+        (!vehicle.battery_voltage_valid || vehicle.battery_voltage_v >= cfg::DROP_TEST_MIN_BATTERY_V) &&
+        vehicle.failure_code == logic::FailCode::FAIL_NONE;
     if (!ready) {
         vehicle.drop_test_rejected_count++;
         ring_buf.pushEvent("DROP_TEST_ARM_REJECTED");
@@ -441,8 +444,14 @@ bool armDropTest(uint32_t now) {
         return false;
     }
 
-    if (!flash_log.isLogging()) {
-        flash_log.startFlightLog();
+    if (flash_log.isLogging()) {
+        flash_log.logEvent("DROP_TEST_PREARM_LOG_CLOSED");
+        flash_log.endFlightLog();
+    }
+    if (!flash_log.startFlightLog()) {
+        vehicle.drop_test_rejected_count++;
+        ring_buf.pushEvent("DROP_TEST_LOG_OPEN_FAILED");
+        return false;
     }
     vehicle.drop_test_id = next_drop_test_id++;
     if (next_drop_test_id == 0) next_drop_test_id = 1;
@@ -648,6 +657,12 @@ void updateLoRaRemoteControl() {
             ring_buf.pushEvent("LORA_REMOTE_PING");
             break;
         case comms::LoRaRemoteCommandType::SET_TARGET:
+            if (vehicle.drop_test_recording) {
+                vehicle.lora_remote_rejected_count++;
+                ring_buf.pushEvent("LORA_TARGET_REJECTED_DROP_ACTIVE");
+                flash_log.logEvent("LORA_TARGET_REJECTED_DROP_ACTIVE");
+                break;
+            }
             if (saveRemoteTarget(remote.target_latitude, remote.target_longitude)) {
                 vehicle.target_latitude = remote.target_latitude;
                 vehicle.target_longitude = remote.target_longitude;
@@ -670,6 +685,7 @@ void updateLoRaRemoteControl() {
             break;
         case comms::LoRaRemoteCommandType::BENCH_SERVO: {
             const bool bench_safe = cfg::LORA_BENCH_SERVO_TEST_ENABLED &&
+                !vehicle.drop_test_recording &&
                 (vehicle.flight_state == logic::FlightState::PAD_SAFE ||
                  vehicle.flight_state == logic::FlightState::SELF_TEST) &&
                 vehicle.failure_code == logic::FailCode::FAIL_NONE &&
@@ -721,6 +737,7 @@ void updateLoRaRemoteControl() {
             break;
         case comms::LoRaRemoteCommandType::MANUAL_BRAKE: {
             const bool safe_state = remoteControlAllowedForState(vehicle.flight_state) &&
+                !vehicle.drop_test_recording &&
                 vehicle.failure_code == logic::FailCode::FAIL_NONE &&
                 servos.isHealthy() &&
                 (vehicle.imu_valid || vehicle.barometer_valid);
@@ -851,6 +868,20 @@ void sendTelemetry() {
     }
 
     vehicle.telemetry_sequence++;
+}
+
+uint32_t telemetryIntervalMs() {
+    uint32_t rate_hz = cfg::TELEMETRY_RATE_HZ;
+    if (vehicle.drop_test_recording) {
+        rate_hz = cfg::DROP_TEST_TELEMETRY_RATE_HZ;
+    } else if (vehicle.drop_test_id != 0 &&
+               (vehicle.drop_test_state == phoenix::DropTestState::IDLE ||
+                vehicle.drop_test_state == phoenix::DropTestState::TEST_COMPLETE ||
+                vehicle.drop_test_state == phoenix::DropTestState::TEST_ABORTED)) {
+        rate_hz = cfg::DROP_TEST_IDLE_TELEMETRY_RATE_HZ;
+    }
+    if (rate_hz == 0) rate_hz = 1;
+    return 1000UL / rate_hz;
 }
 
 void updateHealth() {

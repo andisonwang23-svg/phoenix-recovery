@@ -220,6 +220,9 @@ constexpr float    DROP_TEST_LANDING_ANGULAR_RATE_DPS = 8.0f;
 constexpr uint32_t DROP_TEST_LANDING_CONFIRM_MS = 5000;
 constexpr uint32_t DROP_TEST_POST_LANDING_RECORD_MS = 10000;
 constexpr uint32_t DROP_TEST_MAX_DURATION_MS = 10UL * 60UL * 1000UL;
+constexpr uint32_t DROP_TEST_TELEMETRY_RATE_HZ = 2; // preview only; raw data is logged locally
+constexpr uint32_t DROP_TEST_IDLE_TELEMETRY_RATE_HZ = 1;
+constexpr float    DROP_TEST_MIN_BATTERY_V = 0.0f; // 0 disables until voltage hardware exists
 
 // ---------------------------------------------------------------------------
 // LoRa remote-control supervision

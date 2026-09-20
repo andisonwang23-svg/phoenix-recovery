@@ -70,6 +70,7 @@ void IRAM_ATTR onLoRaPacketReceived() {
 struct TelemetrySnapshot {
     bool valid = false;
     uint32_t rx_ms = 0;
+    uint32_t payload_time_ms = 0;
     uint8_t sequence = 0;
     logic::FlightState flight_state = logic::FlightState::BOOT;
     logic::GuidanceMode guidance_mode = logic::GuidanceMode::MODE_DISABLED;
@@ -233,6 +234,7 @@ void pollTelemetry() {
     telemetry_received_count++;
     telemetry.valid = true;
     telemetry.rx_ms = now;
+    telemetry.payload_time_ms = packet.timestamp_ms;
     telemetry.sequence = packet.sequence;
     telemetry.flight_state = static_cast<logic::FlightState>(packet.flight_state);
     telemetry.guidance_mode = static_cast<logic::GuidanceMode>(packet.guidance_mode);
@@ -271,6 +273,12 @@ void pollTelemetry() {
 
 void updateManualHold() {
     if (!manual_hold.active) return;
+    if (telemetry.drop_test_recording) {
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        last_error = "Manual repeats stopped while drop recording is active";
+        return;
+    }
     const uint32_t now = millis();
     if (static_cast<int32_t>(now - manual_hold.until_ms) >= 0) {
         manual_hold.active = false;
@@ -353,6 +361,10 @@ void handleLine(String line) {
     } else if (line == "status") {
         printLinkStatus();
     } else if (line == "bench 1") {
+        if (telemetry.drop_test_recording) {
+            Serial.println("bench test locked while drop recording is active");
+            return;
+        }
         manual_hold.active = true;
         manual_hold.bench_mode = true;
         manual_hold.servo1 = 0.08f;
@@ -361,6 +373,10 @@ void handleLine(String line) {
         manual_hold.last_repeat_ms = millis();
         sendCommand(comms::LoRaRemoteCommandType::BENCH_SERVO, 0.08f, 0.0f);
     } else if (line == "bench 2") {
+        if (telemetry.drop_test_recording) {
+            Serial.println("bench test locked while drop recording is active");
+            return;
+        }
         manual_hold.active = true;
         manual_hold.bench_mode = true;
         manual_hold.servo1 = 0.0f;
@@ -385,6 +401,10 @@ void handleLine(String line) {
         manual_hold.bench_mode = false;
         sendCommand(comms::LoRaRemoteCommandType::DISABLE_REMOTE);
     } else if (line.startsWith("servo")) {
+        if (telemetry.drop_test_recording) {
+            Serial.println("manual steering locked while drop recording is active");
+            return;
+        }
         float servo1 = 0.0f;
         float servo2 = 0.0f;
         if (!parseTwoFloats(line, "servo", servo1, servo2)) {
@@ -401,6 +421,10 @@ void handleLine(String line) {
         manual_hold.last_repeat_ms = 0;
         sendCommand(comms::LoRaRemoteCommandType::MANUAL_BRAKE, servo1, servo2);
     } else if (line.startsWith("target")) {
+        if (telemetry.drop_test_recording) {
+            Serial.println("target update locked while drop recording is active");
+            return;
+        }
         double lat = 0.0;
         double lon = 0.0;
         if (!parseTarget(line, lat, lon) ||
@@ -419,7 +443,7 @@ String statusJson() {
     const uint32_t now = millis();
     const uint32_t telemetry_age = telemetry.rx_ms == 0 ? UINT32_MAX : now - telemetry.rx_ms;
     const bool telemetry_fresh = telemetry.valid && telemetry_age <= TELEMETRY_STALE_MS;
-    char buf[4096];
+    char buf[4608];
     snprintf(buf, sizeof(buf),
              "{"
              "\"wifi_ok\":%s,"
@@ -442,6 +466,7 @@ String statusJson() {
                 "\"valid\":%s,"
                 "\"fresh\":%s,"
                 "\"age_ms\":%lu,"
+                "\"payload_time_ms\":%lu,"
                 "\"sequence\":%u,"
                 "\"rssi\":%d,"
                 "\"snr\":%.1f,"
@@ -497,6 +522,7 @@ String statusJson() {
              telemetry.valid ? "true" : "false",
              telemetry_fresh ? "true" : "false",
              static_cast<unsigned long>(telemetry_age),
+             static_cast<unsigned long>(telemetry.payload_time_ms),
              telemetry.sequence,
              telemetry.rssi,
              telemetry.snr,
@@ -559,6 +585,10 @@ void handleCommandApi() {
         manual_hold.active = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::NEUTRAL);
     } else if (type == "bench") {
+        if (telemetry.drop_test_recording) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Bench test locked while drop recording is active\"}");
+            return;
+        }
         const int servo_number = server.hasArg("servo") ? server.arg("servo").toInt() : 0;
         if (servo_number != 1 && servo_number != 2) {
             sendJson(400, "{\"ok\":false,\"error\":\"Choose Servo 1 or Servo 2\"}");
@@ -577,6 +607,10 @@ void handleCommandApi() {
         manual_hold.active = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::DISABLE_REMOTE);
     } else if (type == "servo") {
+        if (telemetry.drop_test_recording) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Manual steering locked while drop recording is active\"}");
+            return;
+        }
         float servo1 = server.hasArg("servo1") ? server.arg("servo1").toFloat() : 0.0f;
         float servo2 = server.hasArg("servo2") ? server.arg("servo2").toFloat() : 0.0f;
         servo1 = constrain(servo1, -GROUND_MAX_MANUAL_BRAKE, GROUND_MAX_MANUAL_BRAKE);
@@ -588,6 +622,10 @@ void handleCommandApi() {
         manual_hold.last_repeat_ms = 0;
         ok = sendCommand(comms::LoRaRemoteCommandType::MANUAL_BRAKE, servo1, servo2);
     } else if (type == "target") {
+        if (telemetry.drop_test_recording) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Target update locked while drop recording is active\"}");
+            return;
+        }
         const double lat = server.hasArg("lat") ? server.arg("lat").toDouble() : 0.0;
         const double lon = server.hasArg("lon") ? server.arg("lon").toDouble() : 0.0;
         if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0 ||
@@ -676,7 +714,7 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
     <article class="card">
       <div class="cardHead"><h2>Bench Test</h2><span class="tiny">PAD_SAFE ONLY</span></div>
       <div class="notice">Use only with an inert, unloaded mechanism. Each test is limited, repeated briefly over LoRa, and automatically returns to neutral.</div>
-      <div class="buttonGrid"><button onclick="bench(1)">Test Servo 1 · 8%</button><button onclick="bench(2)">Test Servo 2 · 8%</button></div>
+      <div class="buttonGrid"><button id="bench1" onclick="bench(1)">Test Servo 1 · 8%</button><button id="bench2" onclick="bench(2)">Test Servo 2 · 8%</button></div>
       <div id="benchStatus" class="status">Ready for guarded bench test.</div>
     </article>
 
@@ -686,6 +724,7 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
       <div class="rows">
         <div class="row"><span class="k">Drop state</span><span id="dropState" class="v">--</span></div>
         <div class="row"><span class="k">Test ID</span><span id="dropId" class="v">--</span></div>
+        <div class="row"><span class="k">Payload time</span><span id="payloadTime" class="v">--</span></div>
         <div class="row"><span class="k">Event times</span><span id="dropTimes" class="v">--</span></div>
       </div>
       <div class="commandRow"><button class="primary" onclick="armDrop()">Arm Drop Test</button><button class="danger" onclick="abortDrop()">Abort And Neutral</button></div>
@@ -697,7 +736,7 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
       <div class="cardHead"><h2>Landing Target</h2><span class="tiny">LORA UPDATE</span></div>
       <div class="field"><label>Latitude</label><input id="lat" type="number" step="0.0000001" placeholder="37.1234567"></div>
       <div class="field"><label>Longitude</label><input id="lon" type="number" step="0.0000001" placeholder="-122.1234567"></div>
-      <div class="commandRow"><button class="primary" onclick="sendTarget()">Send Target</button><button onclick="ping()">Ping</button></div>
+      <div class="commandRow"><button id="sendTarget" class="primary" onclick="sendTarget()">Send Target</button><button onclick="ping()">Ping</button></div>
       <div id="targetStatus" class="status">Target changes are validated by the payload.</div>
     </article>
 
@@ -727,22 +766,28 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
 
 <script>
 const el=id=>document.getElementById(id);
+let dropRecordingActive=false;
 async function api(path){const r=await fetch(path); const j=await r.json(); if(!r.ok) throw new Error(j.error||'request failed'); return j;}
 async function command(q,statusId='manualStatus'){
   const box=el(statusId); if(box) box.textContent='Sending…';
   try { const j=await api('/api/command?'+q); if(box) box.textContent='Sent: '+j.status.last_command; await refresh(); return true; }
   catch(e){ if(box) box.textContent='Error: '+e.message; return false; }
 }
-function sendServo(){command('type=servo&servo1='+encodeURIComponent(el('s1').value)+'&servo2='+encodeURIComponent(el('s2').value))}
+function dropLocked(statusId){
+  if(!dropRecordingActive) return false;
+  const box=el(statusId); if(box) box.textContent='Locked while payload is recording locally.';
+  return true;
+}
+function sendServo(){if(dropLocked('manualStatus'))return;command('type=servo&servo1='+encodeURIComponent(el('s1').value)+'&servo2='+encodeURIComponent(el('s2').value))}
 function zeroSliders(){el('s1').value=0;el('s2').value=0;updateSliders()}
 function neutral(){zeroSliders();command('type=neutral')}
 function ping(){command('type=ping','targetStatus')}
-function bench(n){if(confirm('Confirm inert, unloaded bench test for Servo '+n+'?'))command('type=bench&servo='+n,'benchStatus')}
+function bench(n){if(dropLocked('benchStatus'))return;if(confirm('Confirm inert, unloaded bench test for Servo '+n+'?'))command('type=bench&servo='+n,'benchStatus')}
 function armDrop(){if(confirm('Arm payload-owned drop-test recording? Servos will stay neutral.'))command('type=armdrop','dropStatus')}
 function abortDrop(){if(confirm('Abort drop recording and command neutral?'))command('type=abortdrop','dropStatus')}
 function requestLogIndex(){command('type=logindex','dropStatus')}
 function disableRemote(){ if(confirm('Disable rocket LoRa remote control until rocket reboot?')) command('type=disable') }
-function sendTarget(){command('type=target&lat='+encodeURIComponent(el('lat').value)+'&lon='+encodeURIComponent(el('lon').value),'targetStatus')}
+function sendTarget(){if(dropLocked('targetStatus'))return;command('type=target&lat='+encodeURIComponent(el('lat').value)+'&lon='+encodeURIComponent(el('lon').value),'targetStatus')}
 function updateSliders(){el('s1v').textContent=Math.round(+el('s1').value*100)+'%';el('s2v').textContent=Math.round(+el('s2').value*100)+'%'}
 el('s1').addEventListener('input',updateSliders); el('s2').addEventListener('input',updateSliders); updateSliders();
 function health(card,text,good,label){card.className='sensor '+(good?'good':'fail');text.textContent=label}
@@ -750,6 +795,7 @@ function num(v,d=1){return Number.isFinite(v)?v.toFixed(d):'--'}
 async function refresh(){
   try{
     const s=await api('/api/status'), t=s.telemetry;
+    dropRecordingActive=!!t.drop_test_recording;
     const link=el('linkPill');link.className='pill '+(t.fresh?'live':t.valid?'stale':'offline');link.innerHTML='<i class="dot"></i>'+(t.fresh?'PAYLOAD LINK LIVE':t.valid?'TELEMETRY STALE':'NO PAYLOAD LINK');
     el('agePill').textContent=t.valid?(t.age_ms+' ms · '+t.rssi+' dBm'):'NO DATA';
     el('flight').textContent=t.flight_state;el('guidance').textContent=t.guidance_mode+' · '+t.failsafe;
@@ -759,14 +805,15 @@ async function refresh(){
     el('gpsBadge').textContent=t.gps_valid?(t.satellites+' SATELLITES · FIX'):(t.satellites+' SATELLITES · NO FIX');
     health(el('gpsSensor'),el('gpsText'),t.gps_valid,t.gps_valid?'FIX · '+t.satellites+' SAT':'NO FIX');health(el('imuSensor'),el('imuText'),t.imu_valid,t.imu_valid?'HEALTHY':'ERROR');health(el('baroSensor'),el('baroText'),t.baro_valid,t.baro_valid?'HEALTHY':'ERROR');
     el('dropState').textContent=t.drop_test_state;el('dropId').textContent=t.drop_test_id?('#'+t.drop_test_id):'--';
-    el('dropTimes').textContent='arm '+(t.drop_test_armed_ms||'--')+' · release '+(t.drop_test_release_ms||'--')+' · landing '+(t.drop_test_landing_ms||'--');
+    el('payloadTime').textContent=t.payload_time_ms?(t.payload_time_ms+' ms onboard'):'--';
+    el('dropTimes').textContent='payload ms: arm '+(t.drop_test_armed_ms||'--')+' · release '+(t.drop_test_release_ms||'--')+' · landing '+(t.drop_test_landing_ms||'--');
     el('dropGate').textContent=t.drop_test_neutral_lock?'NEUTRAL LOCK':'PAYLOAD OWNED';el('dropGate').className='tiny '+(t.drop_test_recording?'ok':'warn');
-    el('dropStatus').textContent=t.drop_test_recording?'Payload recording locally. Dashboard may disconnect safely.':'Drop recorder idle or closed.';
+    el('dropStatus').textContent=t.drop_test_recording?'Payload recording locally. LoRa is preview-only and quiet.':'Drop recorder idle or closed.';
     el('failsafe').textContent=t.failsafe==='NONE'?'FAILSAFE CLEAR':'FAILSAFE '+t.failsafe;el('failsafe').className='tiny '+(t.failsafe==='NONE'?'ok':'bad');
     el('roll').textContent=num(t.roll_deg)+'°';el('pitch').textContent=num(t.pitch_deg)+'°';el('yaw').textContent=num(t.yaw_deg)+'°';
     el('servo1Text').textContent=Math.round(t.servo1_cmd*100)+'% · '+t.servo1_us+' µs';el('servo2Text').textContent=Math.round(t.servo2_cmd*100)+'% · '+t.servo2_us+' µs';
     el('servo1Fill').style.width=Math.min(100,Math.abs(t.servo1_cmd)*100)+'%';el('servo2Fill').style.width=Math.min(100,Math.abs(t.servo2_cmd)*100)+'%';
-    const steer=t.flight_state==='GUIDED_DESCENT'||t.flight_state==='FINAL_APPROACH';el('sendSteer').disabled=!steer;el('steerGate').textContent=steer?'UNLOCKED FOR DESCENT':'LOCKED · '+t.flight_state;el('steerGate').className='tiny '+(steer?'ok':'warn');
+    const steer=(t.flight_state==='GUIDED_DESCENT'||t.flight_state==='FINAL_APPROACH')&&!dropRecordingActive;el('sendSteer').disabled=!steer;el('sendTarget').disabled=dropRecordingActive;el('bench1').disabled=dropRecordingActive;el('bench2').disabled=dropRecordingActive;el('steerGate').textContent=dropRecordingActive?'LOCKED · DROP RECORDING':(steer?'UNLOCKED FOR DESCENT':'LOCKED · '+t.flight_state);el('steerGate').className='tiny '+(steer?'ok':'warn');
     el('wifi').textContent=s.wifi_ok?s.ip:'OFF';el('clients').textContent=s.clients;el('radio').textContent=s.radio_ok?'RADIO READY':'RADIO ERROR';el('radio').className='tiny '+(s.radio_ok?'ok':'bad');
     el('signal').textContent=t.valid?(t.rssi+' dBm / '+num(t.snr)+' dB'):'--';el('counts').textContent=s.sent_count+' / '+s.failed_count;el('lastcmd').textContent=s.last_command;el('footerStatus').textContent=s.last_error?('ERROR · '+s.last_error):'LOCAL SYSTEM NOMINAL';
   }catch(e){
