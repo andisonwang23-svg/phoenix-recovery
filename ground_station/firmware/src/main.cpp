@@ -767,10 +767,11 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
 <script>
 const el=id=>document.getElementById(id);
 let dropRecordingActive=false;
+let armWaitUntil=0;
 async function api(path){const r=await fetch(path); const j=await r.json(); if(!r.ok) throw new Error(j.error||'request failed'); return j;}
 async function command(q,statusId='manualStatus'){
   const box=el(statusId); if(box) box.textContent='Sending…';
-  try { const j=await api('/api/command?'+q); if(box) box.textContent='Sent: '+j.status.last_command; await refresh(); return true; }
+  try { const j=await api('/api/command?'+q); if(q.indexOf('type=armdrop')>=0) armWaitUntil=Date.now()+6500; if(box) box.textContent='Sent: '+j.status.last_command; await refresh(); return true; }
   catch(e){ if(box) box.textContent='Error: '+e.message; return false; }
 }
 function dropLocked(statusId){
@@ -792,6 +793,14 @@ function updateSliders(){el('s1v').textContent=Math.round(+el('s1').value*100)+'
 el('s1').addEventListener('input',updateSliders); el('s2').addEventListener('input',updateSliders); updateSliders();
 function health(card,text,good,label){card.className='sensor '+(good?'good':'fail');text.textContent=label}
 function num(v,d=1){return Number.isFinite(v)?v.toFixed(d):'--'}
+function armBlockers(t){
+  const b=[];
+  if(!t.valid||!t.fresh)b.push('payload link');
+  if(!t.imu_valid)b.push('IMU');
+  if(!t.baro_valid)b.push('BARO');
+  if(t.failsafe&&t.failsafe!=='NONE')b.push('failsafe '+t.failsafe);
+  return b;
+}
 async function refresh(){
   try{
     const s=await api('/api/status'), t=s.telemetry;
@@ -808,7 +817,9 @@ async function refresh(){
     el('payloadTime').textContent=t.payload_time_ms?(t.payload_time_ms+' ms onboard'):'--';
     el('dropTimes').textContent='payload ms: arm '+(t.drop_test_armed_ms||'--')+' · release '+(t.drop_test_release_ms||'--')+' · landing '+(t.drop_test_landing_ms||'--');
     el('dropGate').textContent=t.drop_test_neutral_lock?'NEUTRAL LOCK':'PAYLOAD OWNED';el('dropGate').className='tiny '+(t.drop_test_recording?'ok':'warn');
-    el('dropStatus').textContent=t.drop_test_recording?'Payload recording locally. LoRa is preview-only and quiet.':'Drop recorder idle or closed.';
+    if(t.drop_test_recording){armWaitUntil=0;el('dropStatus').textContent='Payload recording locally. LoRa is preview-only and quiet.';}
+    else if(Date.now()<armWaitUntil){const b=armBlockers(t);el('dropStatus').textContent=b.length?('Arm sent; waiting for payload. Check '+b.join(', ')+'.'):'Arm sent; waiting for payload to accept.';}
+    else{el('dropStatus').textContent='Drop recorder idle or closed.';}
     el('failsafe').textContent=t.failsafe==='NONE'?'FAILSAFE CLEAR':'FAILSAFE '+t.failsafe;el('failsafe').className='tiny '+(t.failsafe==='NONE'?'ok':'bad');
     el('roll').textContent=num(t.roll_deg)+'°';el('pitch').textContent=num(t.pitch_deg)+'°';el('yaw').textContent=num(t.yaw_deg)+'°';
     el('servo1Text').textContent=Math.round(t.servo1_cmd*100)+'% · '+t.servo1_us+' µs';el('servo2Text').textContent=Math.round(t.servo2_cmd*100)+'% · '+t.servo2_us+' µs';
