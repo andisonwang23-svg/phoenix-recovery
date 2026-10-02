@@ -153,6 +153,24 @@ void ServoController::setServoCommands(float left_cmd, float right_cmd) {
     right_us_target_ = commandToUs(right_cmd, right_cal_);
 }
 
+void ServoController::setBenchServoCommands(float left_cmd, float right_cmd) {
+    if (!initialized_) return;
+
+    // Bench commands have their own calibrated ceiling and never alter the
+    // smaller autonomous-flight steering limit. Pulse-width calibration and
+    // the physical min/max clamps still apply in commandToUs().
+    left_cmd = constrain(left_cmd, -cfg::LORA_BENCH_MAX_SERVO_COMMAND,
+                         cfg::LORA_BENCH_MAX_SERVO_COMMAND);
+    right_cmd = constrain(right_cmd, -cfg::LORA_BENCH_MAX_SERVO_COMMAND,
+                          cfg::LORA_BENCH_MAX_SERVO_COMMAND);
+    if (fabsf(left_cmd) < 0.005f) left_cmd = 0.0f;
+    if (fabsf(right_cmd) < 0.005f) right_cmd = 0.0f;
+    left_cmd_ = left_cmd;
+    right_cmd_ = right_cmd;
+    left_us_target_ = commandToUs(left_cmd, left_cal_);
+    right_us_target_ = commandToUs(right_cmd, right_cal_);
+}
+
 void ServoController::emergencyNeutral() {
     left_us_ = left_cal_.neutral_us;
     right_us_ = right_cal_.neutral_us;

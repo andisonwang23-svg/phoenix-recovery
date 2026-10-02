@@ -19,7 +19,7 @@ namespace telemetry {
 struct TelemetryPacketV1 {
     // Header
     uint8_t  magic[2] = {0x50, 0x52};  // 'P','R' - Phoenix Recovery
-    uint8_t  version = 2;
+    uint8_t  version = 4;
     uint8_t  sequence = 0;
 
     // Timestamp
@@ -63,6 +63,8 @@ struct TelemetryPacketV1 {
     int16_t  right_servo_us = 1500;  // microseconds
     int16_t  left_servo_cmd = 0;     // * 10000
     int16_t  right_servo_cmd = 0;    // * 10000
+    int16_t  servo1_turn_deg = 0;     // estimated calibrated deflection * 100
+    int16_t  servo2_turn_deg = 0;     // estimated calibrated deflection * 100
 
     // Sensor health
     uint8_t  imu_valid = 0;
@@ -77,10 +79,12 @@ struct TelemetryPacketV1 {
 
     // Inert drop-test recording state
     uint8_t  drop_test_state = 0;     // phoenix::DropTestState
-    uint8_t  drop_test_flags = 0;     // bit0 recording, bit1 neutral lock
+    uint8_t  drop_test_flags = 0;     // bit0 recording, bit1 neutral, bit2 NMEA, bit3 canopy signature, bit4 stable descent
     uint16_t drop_test_id = 0;
     uint32_t drop_test_armed_ms = 0;
     uint32_t drop_test_release_ms = 0;
+    uint32_t drop_test_canopy_ms = 0;
+    uint32_t drop_test_stable_ms = 0;
     uint32_t drop_test_landing_ms = 0;
 
     // CRC (CCITT-16)

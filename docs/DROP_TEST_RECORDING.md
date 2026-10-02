@@ -9,8 +9,12 @@ This mode lets the ground LoRa dashboard arm an inert drop-test recording before
 - The payload accepts the arm request only when IMU, barometer, and servos are healthy, no failsafe is active, and any reported battery voltage is acceptable. GNSS is recorded as available or unavailable; it is not required for arming.
 - When accepted, the payload starts a fresh flash log, assigns a drop-test ID, records the arm time, and locks the servos neutral.
 - Release and landing markers are derived from onboard payload sensor time, not ground receive time.
+- Release must persist through a candidate state; brief barometer spikes are rejected and logged.
+- The payload records a **suspected** canopy inflation/load signature and a separate stable-descent observation. Neither marker proves that the canopy is fully open; correlate them with video and inspection.
+- Landing requires persistent low barometric vertical speed, low IMU motion, a small altitude span, and low GPS ground speed when a valid GPS fix exists.
 - **Abort And Neutral** sends `ABORT_DROP_TEST`, commands neutral, marks the test aborted, and closes the partial log when recording is active.
 - Telemetry reports drop-test state, test ID, arm time, release confirmation time, landing confirmation time, recording status, and neutral-lock status.
+- Telemetry also reports the suspected-canopy and stable-descent timestamps. The local log contains the higher-rate synchronized sensor record.
 - During active drop recording, payload telemetry is reduced to a low-rate preview. The raw test record is the onboard flash log, so LoRa delay or dashboard disconnects do not change the measured event timing.
 - The ground station blocks manual steering, target updates, and bench servo commands while drop recording is active to avoid extra LoRa traffic. Abort and neutral commands remain available.
 
@@ -34,6 +38,18 @@ This mode lets the ground LoRa dashboard arm an inert drop-test recording before
 
 ## Safety Boundary
 
-Drop-test mode is for inert testing. While recording is active, `DROP_TEST_NEUTRAL_LOCK_ENABLED` keeps the servos neutral so LoRa delay cannot steer the article or affect the outcome.
+Drop-test mode is for inert testing. While recording is active, the dedicated
+drop-test controller unconditionally keeps both servos neutral so LoRa delay or
+a configuration mistake cannot steer the article or affect the outcome.
 
 This is not yet a complete reliable log-download protocol. `REQUEST_LOG_INDEX` is now defined and visible in the dashboard as a command path, but chunked download and whole-file checksum verification still need to be implemented before post-test download is considered complete.
+
+## Research basis
+
+See `docs/DROP_TEST_RESEARCH_TRACEABILITY.md` for the primary NASA papers,
+source-to-requirement evidence, implementation mapping, calibration limits, and
+progressive validation gates.
+
+Normal launch recovery remains separate and automatic. See
+`docs/LAUNCH_AND_BENCH_RECOVERY_MODE.md` for the launch sequence and the guarded
+20%/40% sensor-independent servo-test procedure.

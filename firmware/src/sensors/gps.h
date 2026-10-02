@@ -26,7 +26,12 @@ public:
         bool valid = false;
         bool fix_valid = false;
         uint32_t timestamp_ms = 0;
+        uint32_t last_uart_byte_ms = 0;
         uint32_t last_nmea_ms = 0;
+        uint32_t uart_bytes_received = 0;
+        uint32_t valid_nmea_sentences = 0;
+        uint32_t failed_nmea_checksums = 0;
+        uint32_t recovery_attempts = 0;
     };
 
     GPS();
@@ -57,6 +62,13 @@ private:
     uint32_t last_update_ms_ = 0;
     uint32_t update_interval_ms_ = 1000; // GPS native rate ~1 Hz
     uint8_t valid_fix_streak_ = 0;
+    uint32_t startup_ms_ = 0;
+    uint32_t last_recovery_attempt_ms_ = 0;
+
+    void powerCycleModule();
+    void restartParser();
+    void invalidateStaleFix(uint32_t now);
+    void recoverSilentModule(uint32_t now);
 
     // NMEA buffer
     static constexpr size_t NMEA_BUF_SIZE = 128;

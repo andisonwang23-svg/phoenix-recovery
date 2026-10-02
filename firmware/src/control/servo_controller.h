@@ -46,7 +46,8 @@ public:
     // Set physical brake-line commands. Persisted channel-role mapping routes
     // these to Servo 1 and Servo 2 without assuming their installed sides.
     void setBrakeCommands(float left_cmd, float right_cmd);
-    void setServoCommands(float servo1_cmd, float servo2_cmd); // bench only
+    void setServoCommands(float servo1_cmd, float servo2_cmd);
+    void setBenchServoCommands(float servo1_cmd, float servo2_cmd);
 
     // Emergency neutral - immediate safe position
     void emergencyNeutral();

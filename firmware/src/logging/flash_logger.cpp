@@ -23,6 +23,15 @@ bool FlashLogger::begin(const FlashLoggerConfig& config) {
     }
 
     initialized_ = true;
+    // Do not silently overwrite flight_0.log after every reboot. Select the
+    // first unused slot; retention/archival can be handled after recovery.
+    for (uint16_t candidate = 0; candidate < 255; ++candidate) {
+        String filename = "/flight_" + String(candidate) + ".log";
+        if (!SPIFFS.exists(filename.c_str())) {
+            current_flight_.flight_number = static_cast<uint8_t>(candidate);
+            break;
+        }
+    }
     Serial.println("[FlashLogger] Initialized successfully");
     return true;
 }
@@ -40,7 +49,7 @@ bool FlashLogger::startFlightLog() {
 
     // Initialize flight header
     memcpy(current_flight_.magic, "PRFL", 4);
-    current_flight_.version = 1;
+    current_flight_.version = 2;
     current_flight_.start_time_ms = millis();
     current_flight_.end_time_ms = 0;
     current_flight_.entry_count = 0;
@@ -138,6 +147,10 @@ bool FlashLogger::logTelemetry(const VehicleState& state) {
     // One synchronized, replayable snapshot. Requested commands are retained
     // separately from actual outputs so a stalled/saturated actuator is visible.
     struct TelemetryData {
+        uint8_t schema_version;
+        uint8_t drop_test_state;
+        uint16_t drop_test_id;
+        uint32_t sample_timestamp_ms;
         uint32_t configuration_version;
         uint8_t flight_state;
         uint8_t guidance_mode;
@@ -146,10 +159,20 @@ bool FlashLogger::logTelemetry(const VehicleState& state) {
         uint32_t gps_age_ms;
         uint32_t baro_age_ms;
         uint32_t imu_age_ms;
+        uint32_t gps_last_update_ms;
+        uint32_t baro_last_update_ms;
+        uint32_t imu_last_update_ms;
         double latitude;
         double longitude;
+        float gps_altitude;
+        float hdop;
+        uint8_t satellites;
         float altitude_agl;
+        float barometric_altitude;
+        float barometric_pressure_hpa;
+        float barometric_temperature_c;
         float vertical_speed;
+        float vertical_accel;
         float ground_speed;
         float gps_course;
         float target_bearing;
@@ -159,6 +182,9 @@ bool FlashLogger::logTelemetry(const VehicleState& state) {
         float pitch;
         float yaw;
         float angular_rate;
+        float gyro_x;
+        float gyro_y;
+        float gyro_z;
         float requested_left;
         float requested_right;
         float actual_left;
@@ -167,8 +193,18 @@ bool FlashLogger::logTelemetry(const VehicleState& state) {
         float actual_right_us;
         float battery_voltage;
         float servo_rail_voltage;
+        uint32_t drop_release_ms;
+        uint32_t canopy_signature_ms;
+        uint32_t stable_descent_ms;
+        uint32_t landing_confirm_ms;
     } data;
 
+    static_assert(sizeof(TelemetryData) <= sizeof(LogEntry::data),
+                  "Telemetry log record exceeds FlashLogger entry size");
+    data.schema_version = 2;
+    data.drop_test_state = static_cast<uint8_t>(state.drop_test_state);
+    data.drop_test_id = state.drop_test_id;
+    data.sample_timestamp_ms = state.timestamp_ms;
     data.configuration_version = state.configuration_version;
     data.flight_state = static_cast<uint8_t>(state.flight_state);
     data.guidance_mode = static_cast<uint8_t>(state.guidance_mode);
@@ -182,10 +218,21 @@ bool FlashLogger::logTelemetry(const VehicleState& state) {
     data.gps_age_ms = state.gps_age_ms;
     data.baro_age_ms = state.baro_age_ms;
     data.imu_age_ms = state.imu_age_ms;
+    data.gps_last_update_ms = state.gps_last_update_ms;
+    data.baro_last_update_ms = state.baro_last_update_ms;
+    data.imu_last_update_ms = state.imu_last_update_ms;
     data.latitude = state.latitude;
     data.longitude = state.longitude;
+    data.gps_altitude = state.gps_altitude_m;
+    data.hdop = state.hdop;
+    data.satellites = static_cast<uint8_t>(state.satellite_count < 0 ? 0 :
+                                           (state.satellite_count > 255 ? 255 : state.satellite_count));
     data.altitude_agl = state.altitude_agl_m;
+    data.barometric_altitude = state.barometric_altitude_m;
+    data.barometric_pressure_hpa = state.barometric_pressure_hpa;
+    data.barometric_temperature_c = state.barometric_temperature_c;
     data.vertical_speed = state.vertical_speed_mps;
+    data.vertical_accel = state.vertical_accel_mps2;
     data.ground_speed = state.ground_speed_mps;
     data.gps_course = state.gps_course_deg;
     data.target_bearing = state.target_bearing_deg;
@@ -195,6 +242,9 @@ bool FlashLogger::logTelemetry(const VehicleState& state) {
     data.pitch = state.pitch_deg;
     data.yaw = state.yaw_deg;
     data.angular_rate = state.angular_rate_dps;
+    data.gyro_x = state.gyro_x_dps;
+    data.gyro_y = state.gyro_y_dps;
+    data.gyro_z = state.gyro_z_dps;
     data.requested_left = state.requested_left_servo_command;
     data.requested_right = state.requested_right_servo_command;
     data.actual_left = state.left_servo_command;
@@ -203,6 +253,10 @@ bool FlashLogger::logTelemetry(const VehicleState& state) {
     data.actual_right_us = state.right_servo_us;
     data.battery_voltage = state.battery_voltage_v;
     data.servo_rail_voltage = state.servo_rail_voltage_v;
+    data.drop_release_ms = state.drop_test_release_confirm_ms;
+    data.canopy_signature_ms = state.drop_test_canopy_signature_ms;
+    data.stable_descent_ms = state.drop_test_stable_descent_ms;
+    data.landing_confirm_ms = state.drop_test_landing_confirm_ms;
 
     return log(LogEntryType::TELEMETRY, reinterpret_cast<const uint8_t*>(&data), sizeof(data));
 }

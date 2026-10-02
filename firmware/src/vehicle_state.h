@@ -6,28 +6,13 @@
 
 #include <cstdint>
 #include "logic/state_machine.h"
+#include "logic/drop_test_controller.h"
 
 namespace phoenix {
 
-enum class DropTestState : uint8_t {
-    IDLE = 0,
-    ARMED_RECORDING = 1,
-    DROP_CONFIRMED = 2,
-    LANDING_CONFIRM = 3,
-    TEST_COMPLETE = 4,
-    TEST_ABORTED = 5
-};
-
+using DropTestState = logic::DropTestState;
 inline const char* dropTestStateName(DropTestState state) {
-    switch (state) {
-        case DropTestState::IDLE: return "IDLE";
-        case DropTestState::ARMED_RECORDING: return "ARMED_RECORDING";
-        case DropTestState::DROP_CONFIRMED: return "DROP_CONFIRMED";
-        case DropTestState::LANDING_CONFIRM: return "LANDING_CONFIRM";
-        case DropTestState::TEST_COMPLETE: return "TEST_COMPLETE";
-        case DropTestState::TEST_ABORTED: return "TEST_ABORTED";
-    }
-    return "UNKNOWN";
+    return logic::dropTestStateName(state);
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +157,8 @@ struct VehicleState {
     uint32_t drop_test_armed_ms = 0;
     uint32_t drop_test_release_onset_ms = 0;
     uint32_t drop_test_release_confirm_ms = 0;
+    uint32_t drop_test_canopy_signature_ms = 0;
+    uint32_t drop_test_stable_descent_ms = 0;
     uint32_t drop_test_landing_candidate_ms = 0;
     uint32_t drop_test_landing_confirm_ms = 0;
     uint32_t drop_test_log_closed_ms = 0;

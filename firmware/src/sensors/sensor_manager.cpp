@@ -167,7 +167,8 @@ void SensorManager::update() {
     state_.gps_age_ms = now - last_gps_valid_ms_;
     const auto& latest_gps = gps_.getData();
     state_.gps_nmea_age_ms = latest_gps.last_nmea_ms > 0 ? now - latest_gps.last_nmea_ms : UINT32_MAX;
-    state_.gps_nmea_active = latest_gps.last_nmea_ms > 0 && state_.gps_nmea_age_ms < 3000;
+    state_.gps_nmea_active = latest_gps.last_nmea_ms > 0 &&
+        state_.gps_nmea_age_ms < cfg::GPS_NMEA_ACTIVE_TIMEOUT_MS;
 
     // Update vehicle state from sensors
     updateVehicleState();
@@ -217,7 +218,8 @@ void SensorManager::updateVehicleState() {
     state_.hdop = gps_data.hdop;
     state_.satellite_count = gps_data.satellites;
     state_.gps_nmea_age_ms = gps_data.last_nmea_ms > 0 ? millis() - gps_data.last_nmea_ms : UINT32_MAX;
-    state_.gps_nmea_active = gps_data.last_nmea_ms > 0 && state_.gps_nmea_age_ms < 3000;
+    state_.gps_nmea_active = gps_data.last_nmea_ms > 0 &&
+        state_.gps_nmea_age_ms < cfg::GPS_NMEA_ACTIVE_TIMEOUT_MS;
 }
 
 void SensorManager::computeVerticalSpeed() {

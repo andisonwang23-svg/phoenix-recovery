@@ -54,7 +54,7 @@ constexpr int      RATE_TELEMETRY_HZ = 5; // default; per-state map below
 
 // Telemetry rate per flight state (Hz)
 constexpr int      TLM_RATE_PAD_HZ     = 1;
-constexpr int      TLM_RATE_FLIGHT_HZ  = 5;   // ascent / guided
+constexpr int      TLM_RATE_FLIGHT_HZ  = 1;   // matched to long-range LoRa airtime
 constexpr int      TLM_RATE_LANDED_HZ  = 1;
 
 // ---------------------------------------------------------------------------

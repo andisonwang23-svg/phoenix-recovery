@@ -88,12 +88,15 @@ struct TelemetrySnapshot {
     float servo2_cmd = 0.0f;
     int16_t servo1_us = 1500;
     int16_t servo2_us = 1500;
+    float servo1_turn_deg = 0.0f;
+    float servo2_turn_deg = 0.0f;
     float roll_deg = 0.0f;
     float pitch_deg = 0.0f;
     float yaw_deg = 0.0f;
     float angular_rate_dps = 0.0f;
     uint8_t satellites = 0;
     bool gps_valid = false;
+    bool gps_nmea_active = false;
     bool imu_valid = false;
     bool baro_valid = false;
     phoenix::DropTestState drop_test_state = phoenix::DropTestState::IDLE;
@@ -102,6 +105,8 @@ struct TelemetrySnapshot {
     uint16_t drop_test_id = 0;
     uint32_t drop_test_armed_ms = 0;
     uint32_t drop_test_release_ms = 0;
+    uint32_t drop_test_canopy_ms = 0;
+    uint32_t drop_test_stable_ms = 0;
     uint32_t drop_test_landing_ms = 0;
     int16_t rssi = 0;
     float snr = 0.0f;
@@ -134,7 +139,7 @@ uint16_t crc16CcittLocal(const uint8_t* data, size_t len) {
 
 bool validTelemetryPacket(const telemetry::TelemetryPacketV1& packet) {
     if (packet.magic[0] != 0x50 || packet.magic[1] != 0x52) return false;
-    if (packet.version != 2) return false;
+    if (packet.version != 4) return false;
     const uint16_t expected = crc16CcittLocal(
         reinterpret_cast<const uint8_t*>(&packet),
         sizeof(telemetry::TelemetryPacketV1) - sizeof(packet.crc)
@@ -252,12 +257,15 @@ void pollTelemetry() {
     telemetry.servo2_cmd = static_cast<float>(packet.right_servo_cmd) / 10000.0f;
     telemetry.servo1_us = packet.left_servo_us;
     telemetry.servo2_us = packet.right_servo_us;
+    telemetry.servo1_turn_deg = static_cast<float>(packet.servo1_turn_deg) / 100.0f;
+    telemetry.servo2_turn_deg = static_cast<float>(packet.servo2_turn_deg) / 100.0f;
     telemetry.roll_deg = static_cast<float>(packet.roll_deg) / 100.0f;
     telemetry.pitch_deg = static_cast<float>(packet.pitch_deg) / 100.0f;
     telemetry.yaw_deg = static_cast<float>(packet.yaw_deg) / 100.0f;
     telemetry.angular_rate_dps = static_cast<float>(packet.angular_rate_dps) / 10.0f;
     telemetry.satellites = packet.satellites;
     telemetry.gps_valid = packet.gps_valid != 0 || packet.gps_fix_valid != 0;
+    telemetry.gps_nmea_active = (packet.drop_test_flags & 4U) != 0;
     telemetry.imu_valid = packet.imu_valid != 0;
     telemetry.baro_valid = packet.baro_valid != 0;
     telemetry.drop_test_state = static_cast<phoenix::DropTestState>(packet.drop_test_state);
@@ -266,6 +274,8 @@ void pollTelemetry() {
     telemetry.drop_test_id = packet.drop_test_id;
     telemetry.drop_test_armed_ms = packet.drop_test_armed_ms;
     telemetry.drop_test_release_ms = packet.drop_test_release_ms;
+    telemetry.drop_test_canopy_ms = packet.drop_test_canopy_ms;
+    telemetry.drop_test_stable_ms = packet.drop_test_stable_ms;
     telemetry.drop_test_landing_ms = packet.drop_test_landing_ms;
     telemetry.rssi = radio.getRSSI();
     telemetry.snr = radio.getSNR();
@@ -305,7 +315,7 @@ void printHelp() {
     Serial.println("  status                      shows payload LoRa telemetry link");
     Serial.println("  armdrop                     arm payload-owned inert drop recording");
     Serial.println("  abortdrop                   abort drop recording and command neutral");
-    Serial.println("  bench <1|2>                 small timed PAD_SAFE servo test");
+    Serial.println("  bench <1|2> <20|40>         timed unloaded prelaunch servo test");
     Serial.println("  neutral");
     Serial.println("  servo <servo1> <servo2>     values -1.00..+1.00; rocket clamps again");
     Serial.println("  target <latitude> <longitude>");
@@ -332,7 +342,7 @@ void printLinkStatus() {
         Serial.printf(" age=%lums seq=%u RSSI=%ddBm SNR=%.1fdB state=%s GPS=%s IMU=%s BARO=%s\n",
                       (unsigned long)age, telemetry.sequence, telemetry.rssi, telemetry.snr,
                       logic::flightStateName(telemetry.flight_state),
-                      telemetry.gps_valid ? "OK" : "NO_FIX",
+                      telemetry.gps_valid ? "FIX" : (telemetry.gps_nmea_active ? "SEARCHING" : "NO_DATA"),
                       telemetry.imu_valid ? "OK" : "BAD",
                       telemetry.baro_valid ? "OK" : "BAD");
     } else {
@@ -360,30 +370,28 @@ void handleLine(String line) {
         printHelp();
     } else if (line == "status") {
         printLinkStatus();
-    } else if (line == "bench 1") {
+    } else if (line.startsWith("bench ")) {
         if (telemetry.drop_test_recording) {
             Serial.println("bench test locked while drop recording is active");
             return;
         }
-        manual_hold.active = true;
-        manual_hold.bench_mode = true;
-        manual_hold.servo1 = 0.08f;
-        manual_hold.servo2 = 0.0f;
-        manual_hold.until_ms = millis() + 1000;
-        manual_hold.last_repeat_ms = millis();
-        sendCommand(comms::LoRaRemoteCommandType::BENCH_SERVO, 0.08f, 0.0f);
-    } else if (line == "bench 2") {
-        if (telemetry.drop_test_recording) {
-            Serial.println("bench test locked while drop recording is active");
+        int servo_number = 0;
+        int percent = 0;
+        if (sscanf(line.c_str(), "bench %d %d", &servo_number, &percent) != 2 ||
+            (servo_number != 1 && servo_number != 2) ||
+            (percent != 20 && percent != 40)) {
+            Serial.println("use: bench <1|2> <20|40>");
             return;
         }
+        const float amount = static_cast<float>(percent) / 100.0f;
         manual_hold.active = true;
         manual_hold.bench_mode = true;
-        manual_hold.servo1 = 0.0f;
-        manual_hold.servo2 = 0.08f;
+        manual_hold.servo1 = servo_number == 1 ? amount : 0.0f;
+        manual_hold.servo2 = servo_number == 2 ? amount : 0.0f;
         manual_hold.until_ms = millis() + 1000;
         manual_hold.last_repeat_ms = millis();
-        sendCommand(comms::LoRaRemoteCommandType::BENCH_SERVO, 0.0f, 0.08f);
+        sendCommand(comms::LoRaRemoteCommandType::BENCH_SERVO,
+                    manual_hold.servo1, manual_hold.servo2);
     } else if (line == "ping") {
         sendCommand(comms::LoRaRemoteCommandType::PING);
     } else if (line == "armdrop") {
@@ -486,12 +494,15 @@ String statusJson() {
                 "\"servo2_cmd\":%.3f,"
                 "\"servo1_us\":%d,"
                 "\"servo2_us\":%d,"
+                "\"servo1_turn_deg\":%.1f,"
+                "\"servo2_turn_deg\":%.1f,"
                 "\"roll_deg\":%.1f,"
                 "\"pitch_deg\":%.1f,"
                 "\"yaw_deg\":%.1f,"
                 "\"angular_rate_dps\":%.1f,"
                 "\"satellites\":%u,"
                 "\"gps_valid\":%s,"
+                "\"gps_nmea_active\":%s,"
                 "\"imu_valid\":%s,"
                 "\"baro_valid\":%s,"
                 "\"drop_test_state\":\"%s\","
@@ -500,6 +511,8 @@ String statusJson() {
                 "\"drop_test_id\":%u,"
                 "\"drop_test_armed_ms\":%lu,"
                 "\"drop_test_release_ms\":%lu,"
+                "\"drop_test_canopy_ms\":%lu,"
+                "\"drop_test_stable_ms\":%lu,"
                 "\"drop_test_landing_ms\":%lu"
              "}"
              "}",
@@ -542,12 +555,15 @@ String statusJson() {
              telemetry.servo2_cmd,
              telemetry.servo1_us,
              telemetry.servo2_us,
+             telemetry.servo1_turn_deg,
+             telemetry.servo2_turn_deg,
              telemetry.roll_deg,
              telemetry.pitch_deg,
              telemetry.yaw_deg,
              telemetry.angular_rate_dps,
              telemetry.satellites,
              telemetry.gps_valid ? "true" : "false",
+             telemetry.gps_nmea_active ? "true" : "false",
              telemetry.imu_valid ? "true" : "false",
              telemetry.baro_valid ? "true" : "false",
              phoenix::dropTestStateName(telemetry.drop_test_state),
@@ -556,6 +572,8 @@ String statusJson() {
              telemetry.drop_test_id,
              static_cast<unsigned long>(telemetry.drop_test_armed_ms),
              static_cast<unsigned long>(telemetry.drop_test_release_ms),
+             static_cast<unsigned long>(telemetry.drop_test_canopy_ms),
+             static_cast<unsigned long>(telemetry.drop_test_stable_ms),
              static_cast<unsigned long>(telemetry.drop_test_landing_ms));
     return String(buf);
 }
@@ -594,7 +612,15 @@ void handleCommandApi() {
             sendJson(400, "{\"ok\":false,\"error\":\"Choose Servo 1 or Servo 2\"}");
             return;
         }
-        const float amount = cfg::LORA_BENCH_MAX_SERVO_COMMAND;
+        const float requested_amount = server.hasArg("amount") ?
+            server.arg("amount").toFloat() : 0.20f;
+        if (fabsf(requested_amount - 0.20f) > 0.001f &&
+            fabsf(requested_amount - 0.40f) > 0.001f) {
+            sendJson(400, "{\"ok\":false,\"error\":\"Bench amount must be 20% or 40%\"}");
+            return;
+        }
+        const float amount = constrain(requested_amount, 0.0f,
+                                       cfg::LORA_BENCH_MAX_SERVO_COMMAND);
         manual_hold.active = true;
         manual_hold.bench_mode = true;
         manual_hold.servo1 = servo_number == 1 ? amount : 0.0f;
@@ -712,9 +738,9 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
     </article>
 
     <article class="card">
-      <div class="cardHead"><h2>Bench Test</h2><span class="tiny">PAD_SAFE ONLY</span></div>
-      <div class="notice">Use only with an inert, unloaded mechanism. Each test is limited, repeated briefly over LoRa, and automatically returns to neutral.</div>
-      <div class="buttonGrid"><button id="bench1" onclick="bench(1)">Test Servo 1 · 8%</button><button id="bench2" onclick="bench(2)">Test Servo 2 · 8%</button></div>
+      <div class="cardHead"><h2>Bench Test</h2><span class="tiny">PRELAUNCH · SENSORS OPTIONAL</span></div>
+      <div class="notice">Disconnect brake lines and remove all load first. These tests do not require GPS, IMU, or barometer health. They are accepted only before launch, during the first five minutes after payload boot, and automatically return to neutral.</div>
+      <div class="buttonGrid"><button class="benchBtn" onclick="bench(1,.20)">Servo 1 · 20%</button><button class="benchBtn" onclick="bench(1,.40)">Servo 1 · 40%</button><button class="benchBtn" onclick="bench(2,.20)">Servo 2 · 20%</button><button class="benchBtn" onclick="bench(2,.40)">Servo 2 · 40%</button></div>
       <div id="benchStatus" class="status">Ready for guarded bench test.</div>
     </article>
 
@@ -723,6 +749,7 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
       <div class="notice">Arm before release. The payload records locally and keeps servos neutral; LoRa timing is used only for supervision.</div>
       <div class="rows">
         <div class="row"><span class="k">Drop state</span><span id="dropState" class="v">--</span></div>
+        <div class="row"><span class="k">Recovery recording</span><span id="recoveryMode" class="v">AUTO READY</span></div>
         <div class="row"><span class="k">Test ID</span><span id="dropId" class="v">--</span></div>
         <div class="row"><span class="k">Payload time</span><span id="payloadTime" class="v">--</span></div>
         <div class="row"><span class="k">Event times</span><span id="dropTimes" class="v">--</span></div>
@@ -783,7 +810,7 @@ function sendServo(){if(dropLocked('manualStatus'))return;command('type=servo&se
 function zeroSliders(){el('s1').value=0;el('s2').value=0;updateSliders()}
 function neutral(){zeroSliders();command('type=neutral')}
 function ping(){command('type=ping','targetStatus')}
-function bench(n){if(dropLocked('benchStatus'))return;if(confirm('Confirm inert, unloaded bench test for Servo '+n+'?'))command('type=bench&servo='+n,'benchStatus')}
+function bench(n,a){if(dropLocked('benchStatus'))return;const p=Math.round(a*100);if(confirm('Confirm Servo '+n+' at '+p+'% with brake lines disconnected and no load?'))command('type=bench&servo='+n+'&amount='+a,'benchStatus')}
 function armDrop(){if(confirm('Arm payload-owned drop-test recording? Servos will stay neutral.'))command('type=armdrop','dropStatus')}
 function abortDrop(){if(confirm('Abort drop recording and command neutral?'))command('type=abortdrop','dropStatus')}
 function requestLogIndex(){command('type=logindex','dropStatus')}
@@ -811,20 +838,22 @@ async function refresh(){
     el('alt').textContent=num(t.altitude_agl_m);el('distance').textContent=num(t.distance_to_target_m,0);el('speed').textContent=num(t.ground_speed_mps);
     el('coords').textContent=t.gps_valid?(t.lat.toFixed(7)+', '+t.lon.toFixed(7)):'Waiting for valid fix';
     el('course').textContent=num(t.gps_course_deg)+'° / '+num(t.target_bearing_deg)+'°';el('heading').textContent=num(t.heading_error_deg)+'°';el('vspeed').textContent=num(t.vertical_speed_mps,2)+' m/s';
-    el('gpsBadge').textContent=t.gps_valid?(t.satellites+' SATELLITES · FIX'):(t.satellites+' SATELLITES · NO FIX');
-    health(el('gpsSensor'),el('gpsText'),t.gps_valid,t.gps_valid?'FIX · '+t.satellites+' SAT':'NO FIX');health(el('imuSensor'),el('imuText'),t.imu_valid,t.imu_valid?'HEALTHY':'ERROR');health(el('baroSensor'),el('baroText'),t.baro_valid,t.baro_valid?'HEALTHY':'ERROR');
+    el('gpsBadge').textContent=t.gps_valid?(t.satellites+' SATELLITES · FIX'):(t.gps_nmea_active?'GNSS CONNECTED · SEARCHING':'NO GNSS DATA');
+    health(el('gpsSensor'),el('gpsText'),t.gps_valid,t.gps_valid?'FIX · '+t.satellites+' SAT':(t.gps_nmea_active?'CONNECTED · SEARCHING':'NO DATA'));if(!t.gps_valid&&t.gps_nmea_active)el('gpsSensor').className='sensor';health(el('imuSensor'),el('imuText'),t.imu_valid,t.imu_valid?'HEALTHY':'ERROR');health(el('baroSensor'),el('baroText'),t.baro_valid,t.baro_valid?'HEALTHY':'ERROR');
     el('dropState').textContent=t.drop_test_state;el('dropId').textContent=t.drop_test_id?('#'+t.drop_test_id):'--';
+    const launchRecovery=['ASCENT','APOGEE_DETECT','APOGEE_CONFIRMED','DEPLOYMENT_WAIT','PARAFOIL_STABILIZATION','GUIDED_DESCENT','FINAL_APPROACH','FLARE'].includes(t.flight_state);
+    el('recoveryMode').textContent=t.drop_test_recording?'INERT DROP · LOCAL LOG':(launchRecovery?'LAUNCH RECOVERY · AUTO LOG':'AUTO LAUNCH READY');
     el('payloadTime').textContent=t.payload_time_ms?(t.payload_time_ms+' ms onboard'):'--';
-    el('dropTimes').textContent='payload ms: arm '+(t.drop_test_armed_ms||'--')+' · release '+(t.drop_test_release_ms||'--')+' · landing '+(t.drop_test_landing_ms||'--');
+    el('dropTimes').textContent='payload ms: arm '+(t.drop_test_armed_ms||'--')+' · release '+(t.drop_test_release_ms||'--')+' · canopy signature '+(t.drop_test_canopy_ms||'--')+' · stable '+(t.drop_test_stable_ms||'--')+' · landing '+(t.drop_test_landing_ms||'--');
     el('dropGate').textContent=t.drop_test_neutral_lock?'NEUTRAL LOCK':'PAYLOAD OWNED';el('dropGate').className='tiny '+(t.drop_test_recording?'ok':'warn');
     if(t.drop_test_recording){armWaitUntil=0;el('dropStatus').textContent='Payload recording locally. LoRa is preview-only and quiet.';}
     else if(Date.now()<armWaitUntil){const b=armBlockers(t);el('dropStatus').textContent=b.length?('Arm sent; waiting for payload. Check '+b.join(', ')+'.'):'Arm sent; waiting for payload to accept.';}
     else{el('dropStatus').textContent='Drop recorder idle or closed.';}
     el('failsafe').textContent=t.failsafe==='NONE'?'FAILSAFE CLEAR':'FAILSAFE '+t.failsafe;el('failsafe').className='tiny '+(t.failsafe==='NONE'?'ok':'bad');
     el('roll').textContent=num(t.roll_deg)+'°';el('pitch').textContent=num(t.pitch_deg)+'°';el('yaw').textContent=num(t.yaw_deg)+'°';
-    el('servo1Text').textContent=Math.round(t.servo1_cmd*100)+'% · '+t.servo1_us+' µs';el('servo2Text').textContent=Math.round(t.servo2_cmd*100)+'% · '+t.servo2_us+' µs';
+    el('servo1Text').textContent=Math.round(t.servo1_cmd*100)+'% · '+t.servo1_us+' µs · '+num(t.servo1_turn_deg)+'°';el('servo2Text').textContent=Math.round(t.servo2_cmd*100)+'% · '+t.servo2_us+' µs · '+num(t.servo2_turn_deg)+'°';
     el('servo1Fill').style.width=Math.min(100,Math.abs(t.servo1_cmd)*100)+'%';el('servo2Fill').style.width=Math.min(100,Math.abs(t.servo2_cmd)*100)+'%';
-    const steer=(t.flight_state==='GUIDED_DESCENT'||t.flight_state==='FINAL_APPROACH')&&!dropRecordingActive;el('sendSteer').disabled=!steer;el('sendTarget').disabled=dropRecordingActive;el('bench1').disabled=dropRecordingActive;el('bench2').disabled=dropRecordingActive;el('steerGate').textContent=dropRecordingActive?'LOCKED · DROP RECORDING':(steer?'UNLOCKED FOR DESCENT':'LOCKED · '+t.flight_state);el('steerGate').className='tiny '+(steer?'ok':'warn');
+    const steer=(t.flight_state==='GUIDED_DESCENT'||t.flight_state==='FINAL_APPROACH')&&!dropRecordingActive;el('sendSteer').disabled=!steer;el('sendTarget').disabled=dropRecordingActive;document.querySelectorAll('.benchBtn').forEach(b=>b.disabled=dropRecordingActive);el('steerGate').textContent=dropRecordingActive?'LOCKED · DROP RECORDING':(steer?'UNLOCKED FOR DESCENT':'LOCKED · '+t.flight_state);el('steerGate').className='tiny '+(steer?'ok':'warn');
     el('wifi').textContent=s.wifi_ok?s.ip:'OFF';el('clients').textContent=s.clients;el('radio').textContent=s.radio_ok?'RADIO READY':'RADIO ERROR';el('radio').className='tiny '+(s.radio_ok?'ok':'bad');
     el('signal').textContent=t.valid?(t.rssi+' dBm / '+num(t.snr)+' dB'):'--';el('counts').textContent=s.sent_count+' / '+s.failed_count;el('lastcmd').textContent=s.last_command;el('footerStatus').textContent=s.last_error?('ERROR · '+s.last_error):'LOCAL SYSTEM NOMINAL';
   }catch(e){

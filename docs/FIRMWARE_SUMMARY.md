@@ -99,9 +99,9 @@ BOOT → SELF_TEST → PAD_SAFE → ASCENT → APOGEE_TRANSITION
 ### 6. LoRa Telemetry (`comms/lora.cpp`)
 
 - RadioLib v7 SX1262 driver
-- 915 MHz, SF7, BW 125 kHz, CR 4/5
+- 915 MHz, SF10, BW 125 kHz, CR 4/7, 16-symbol preamble
 - Binary packet v1 (CCITT-16 CRC)
-- 5 Hz default (state-dependent)
+- One telemetry packet every 3 seconds (4 seconds while remote control is active)
 
 ### 7. WiFi Dashboard (`comms/wifi_manager.cpp`)
 

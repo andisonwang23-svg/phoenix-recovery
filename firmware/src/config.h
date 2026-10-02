@@ -36,6 +36,15 @@ constexpr int PIN_GPS_PPS        = 41;  // optional; -1 disables
 constexpr int PIN_GNSS_POWER     = 34;  // Heltec VGNSS_CTRL, active LOW
 constexpr int PIN_GNSS_RST       = 42;  // Heltec GNSS reset, active LOW; set HIGH to run
 constexpr unsigned long GPS_BAUD = 9600;
+// A valid NMEA sentence proves that the module and UART link are alive even
+// before satellites are acquired. If the L76K is completely silent, perform
+// a bounded power-cycle recovery; never restart a module that is merely
+// searching for satellites.
+constexpr uint32_t GPS_NMEA_ACTIVE_TIMEOUT_MS = 3000;
+constexpr uint32_t GPS_NMEA_STARTUP_GRACE_MS = 12000;
+constexpr uint32_t GPS_NMEA_RECOVERY_RETRY_MS = 30000;
+constexpr uint32_t GPS_POWER_OFF_TIME_MS = 100;
+constexpr uint32_t GPS_BOOT_WAIT_MS = 500;
 // Servos (brake lines)
 constexpr int PIN_SERVO_LEFT     = 4;   // ⚠ GPIO4 is the board default I2C SCL —
                                         //   never call bare Wire.begin() (see PIN_MAP.md §4)
@@ -201,7 +210,7 @@ constexpr double TARGET_LON = 0.0;  // Alias for TARGET_LONGITUDE
 constexpr uint8_t LORA_SYNC_WORD = 0x12;
 constexpr uint32_t TELEMETRY_RATE_HZ = 5;
 constexpr uint32_t LOG_RATE_HZ = 10;
-constexpr uint32_t CONFIG_VERSION = 3;
+constexpr uint32_t CONFIG_VERSION = 5;
 constexpr uint32_t MAIN_LOOP_INTERVAL_MS = 10; // 100 Hz main loop
 
 // ---------------------------------------------------------------------------
@@ -211,12 +220,27 @@ constexpr uint32_t MAIN_LOOP_INTERVAL_MS = 10; // 100 Hz main loop
 // During early inert tests, the payload keeps servos neutral and uses only
 // onboard sensor time for event markers.
 constexpr bool     DROP_TEST_MODE_ENABLED = true;
+// In inert drop-test builds this must remain true. The controller also enforces
+// the lock unconditionally so a configuration edit cannot enable steering.
 constexpr bool     DROP_TEST_NEUTRAL_LOCK_ENABLED = true;
+static_assert(DROP_TEST_NEUTRAL_LOCK_ENABLED,
+              "Inert drop-test firmware requires neutral servo lock");
 constexpr float    DROP_TEST_RELEASE_SPEED_MPS = -1.0f;
 constexpr float    DROP_TEST_RELEASE_ALT_LOSS_M = 1.5f;
 constexpr uint32_t DROP_TEST_RELEASE_CONFIRM_MS = 400;
+// Observational signatures only: a sensor signature does not prove that the
+// canopy is fully open. All thresholds REQUIRES EXPERIMENTAL CALIBRATION.
+constexpr uint32_t DROP_TEST_CANOPY_OBSERVATION_DELAY_MS = 150;
+constexpr float    DROP_TEST_CANOPY_DECEL_DELTA_MPS = 1.5f;
+constexpr float    DROP_TEST_CANOPY_ACCEL_SIGNATURE_MPS2 = 3.0f;
+constexpr uint32_t DROP_TEST_STABLE_DESCENT_WINDOW_MS = 1000;
+constexpr float    DROP_TEST_STABLE_DESCENT_MAX_VS_RANGE_MPS = 1.5f;
+constexpr float    DROP_TEST_STABLE_DESCENT_MAX_ANGULAR_RATE_DPS = 15.0f;
+constexpr float    DROP_TEST_STABLE_DESCENT_MIN_DOWN_SPEED_MPS = 0.25f;
 constexpr float    DROP_TEST_LANDING_VS_MPS = 0.25f;
 constexpr float    DROP_TEST_LANDING_ANGULAR_RATE_DPS = 8.0f;
+constexpr float    DROP_TEST_LANDING_GROUND_SPEED_MPS = 1.0f;
+constexpr float    DROP_TEST_LANDING_ALTITUDE_SPAN_M = 0.75f;
 constexpr uint32_t DROP_TEST_LANDING_CONFIRM_MS = 5000;
 constexpr uint32_t DROP_TEST_POST_LANDING_RECORD_MS = 10000;
 constexpr uint32_t DROP_TEST_MAX_DURATION_MS = 10UL * 60UL * 1000UL;
@@ -237,8 +261,11 @@ constexpr uint32_t LORA_REMOTE_COMMAND_TIMEOUT_MS = 750;
 constexpr float    LORA_REMOTE_MAX_BRAKE_COMMAND = 0.25f; // REQUIRES EXPERIMENTAL CALIBRATION
 constexpr bool     LORA_REMOTE_ALLOW_WITHOUT_TARGET = true;
 constexpr bool     LORA_BENCH_SERVO_TEST_ENABLED = true;
-constexpr float    LORA_BENCH_MAX_SERVO_COMMAND = 0.08f; // REQUIRES EXPERIMENTAL CALIBRATION
+// Unloaded bench travel only. 40% of calibrated travel is not approved brake
+// travel until the line geometry and loads are measured.
+constexpr float    LORA_BENCH_MAX_SERVO_COMMAND = 0.40f; // REQUIRES EXPERIMENTAL CALIBRATION
 constexpr uint32_t LORA_BENCH_SERVO_TIMEOUT_MS = 600;
+constexpr uint32_t LORA_BENCH_TEST_WINDOW_MS = 5UL * 60UL * 1000UL;
 
 // ---------------------------------------------------------------------------
 // Servo channel aliases

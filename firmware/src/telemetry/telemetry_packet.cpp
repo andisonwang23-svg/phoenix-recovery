@@ -21,7 +21,7 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
 void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& packet, uint8_t sequence) {
     packet.magic[0] = 0x50;
     packet.magic[1] = 0x52;
-    packet.version = 2;
+    packet.version = 4;
     packet.sequence = sequence;
 
     packet.timestamp_ms = state.timestamp_ms;
@@ -61,6 +61,8 @@ void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& pack
     packet.right_servo_us = static_cast<int16_t>(state.right_servo_us);
     packet.left_servo_cmd = static_cast<int16_t>(state.left_servo_command * 10000);
     packet.right_servo_cmd = static_cast<int16_t>(state.right_servo_command * 10000);
+    packet.servo1_turn_deg = static_cast<int16_t>(state.left_servo_turn_deg * 100);
+    packet.servo2_turn_deg = static_cast<int16_t>(state.right_servo_turn_deg * 100);
 
     // Sensor health
     packet.imu_valid = state.imu_valid ? 1 : 0;
@@ -74,10 +76,15 @@ void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& pack
     packet.lora_snr_x10 = static_cast<int16_t>(state.lora_snr * 10);
     packet.drop_test_state = static_cast<uint8_t>(state.drop_test_state);
     packet.drop_test_flags = (state.drop_test_recording ? 1U : 0U) |
-                             (state.drop_test_neutral_lock ? 2U : 0U);
+                             (state.drop_test_neutral_lock ? 2U : 0U) |
+                             (state.gps_nmea_active ? 4U : 0U) |
+                             (state.drop_test_canopy_signature_ms != 0 ? 8U : 0U) |
+                             (state.drop_test_stable_descent_ms != 0 ? 16U : 0U);
     packet.drop_test_id = state.drop_test_id;
     packet.drop_test_armed_ms = state.drop_test_armed_ms;
     packet.drop_test_release_ms = state.drop_test_release_confirm_ms;
+    packet.drop_test_canopy_ms = state.drop_test_canopy_signature_ms;
+    packet.drop_test_stable_ms = state.drop_test_stable_descent_ms;
     packet.drop_test_landing_ms = state.drop_test_landing_confirm_ms;
 
     // CRC (compute over everything except CRC field)

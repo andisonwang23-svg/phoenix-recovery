@@ -596,13 +596,13 @@ void WiFiManager::handleServoTest(AsyncWebServerRequest* request) {
         response_measurement_active_ = false;
         servos_->emergencyNeutral();
     } else if (command == "servo1_40") {
-        servos_->setServoCommands(0.40f, 0.0f);
+        servos_->setBenchServoCommands(0.40f, 0.0f);
     } else if (command == "servo1_80") {
-        servos_->setServoCommands(0.80f, 0.0f);
+        servos_->setBenchServoCommands(0.80f, 0.0f);
     } else if (command == "servo2_40") {
-        servos_->setServoCommands(0.0f, 0.40f);
+        servos_->setBenchServoCommands(0.0f, 0.40f);
     } else if (command == "servo2_80") {
-        servos_->setServoCommands(0.0f, 0.80f);
+        servos_->setBenchServoCommands(0.0f, 0.80f);
     } else if (command == "brake40") {
         servos_->setBrakeCommands(0.40f, 0.40f);
     } else {

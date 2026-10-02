@@ -116,7 +116,7 @@ private:
     uint32_t data_size_ = 0;
     uint8_t sequence_ = 0;
 
-    FlightLogHeader current_flight_;
+    FlightLogHeader current_flight_{};
     uint32_t current_flight_offset_ = 0;
 
     // Flash memory management

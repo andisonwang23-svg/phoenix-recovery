@@ -4,6 +4,7 @@
 #include "gps.h"
 
 #include <TinyGPSPlus.h>
+#include "logic/gps_link_health.h"
 
 namespace sensors {
 
@@ -11,37 +12,105 @@ GPS::GPS() = default;
 
 GPS::~GPS() { delete gps_; }
 
-bool GPS::begin(HardwareSerial& serial) {
-    // Enable the Heltec GNSS connector's active-low power gate before UART.
-    // PHOENIX uses the Heltec factory GPS-test mapping:
-    // GPIO34 LOW powers VGNSS, GPIO42 HIGH releases GNSS reset.
+void GPS::powerCycleModule() {
+    // Original WiFi LoRa 32 V4/V4.3 mapping: GPIO34 is the active-low GNSS
+    // power gate and GPIO42 is the active-low GNSS reset. Hold reset while
+    // power is removed, then release it only after the rail is restored.
     pinMode(cfg::PIN_GNSS_POWER, OUTPUT);
-    digitalWrite(cfg::PIN_GNSS_POWER, LOW);
     if (cfg::PIN_GNSS_RST >= 0) {
         pinMode(cfg::PIN_GNSS_RST, OUTPUT);
+        digitalWrite(cfg::PIN_GNSS_RST, LOW);
+    }
+    digitalWrite(cfg::PIN_GNSS_POWER, HIGH);
+    delay(cfg::GPS_POWER_OFF_TIME_MS);
+    digitalWrite(cfg::PIN_GNSS_POWER, LOW);
+    delay(50);
+    if (cfg::PIN_GNSS_RST >= 0) {
         digitalWrite(cfg::PIN_GNSS_RST, HIGH);
     }
-    delay(250);
+    delay(cfg::GPS_BOOT_WAIT_MS);
+}
 
-    serial_ = &serial;
-    serial_->begin(cfg::GPS_BAUD, SERIAL_8N1, cfg::PIN_GPS_RX, cfg::PIN_GPS_TX);
+void GPS::restartParser() {
     delete gps_;
     gps_ = new TinyGPSPlus();
+    valid_fix_streak_ = 0;
+    data_.valid = false;
+    data_.fix_valid = false;
+}
+
+bool GPS::begin(HardwareSerial& serial) {
+    serial_ = &serial;
+    serial_->begin(cfg::GPS_BAUD, SERIAL_8N1, cfg::PIN_GPS_RX, cfg::PIN_GPS_TX);
+    powerCycleModule();
+    while (serial_->available()) serial_->read();
+    data_ = Data{};
+    prev_data_ = Data{};
+    restartParser();
     if (!gps_) return false;
     initialized_ = true;
-    last_update_ms_ = millis();
+    startup_ms_ = millis();
+    last_recovery_attempt_ms_ = startup_ms_;
+    last_update_ms_ = startup_ms_;
     return true;
+}
+
+void GPS::invalidateStaleFix(uint32_t now) {
+    const bool usable = gps_ && logic::gpsFixUsable(
+        now,
+        data_.last_nmea_ms,
+        cfg::GPS_NMEA_ACTIVE_TIMEOUT_MS,
+        gps_->location.isValid(),
+        gps_->location.age(),
+        cfg::GPS_LOSS_TIMEOUT_MS);
+    if (!usable) {
+        data_.valid = false;
+        data_.fix_valid = false;
+        valid_fix_streak_ = 0;
+    }
+}
+
+void GPS::recoverSilentModule(uint32_t now) {
+    if (!logic::gpsSilentRecoveryDue(
+            now, startup_ms_, data_.last_nmea_ms,
+            last_recovery_attempt_ms_, cfg::GPS_NMEA_STARTUP_GRACE_MS,
+            cfg::GPS_NMEA_RECOVERY_RETRY_MS)) return;
+
+    last_recovery_attempt_ms_ = now;
+    ++data_.recovery_attempts;
+    if (serial_) serial_->end();
+    powerCycleModule();
+    if (serial_) {
+        serial_->begin(cfg::GPS_BAUD, SERIAL_8N1, cfg::PIN_GPS_RX, cfg::PIN_GPS_TX);
+        while (serial_->available()) serial_->read();
+    }
+    restartParser();
+    data_.last_uart_byte_ms = 0;
+    data_.last_nmea_ms = 0;
+    startup_ms_ = millis();
 }
 
 bool GPS::update() {
     if (!initialized_ || !gps_ || !serial_) return false;
 
+    const uint32_t now = millis();
     bool sentence_complete = false;
     while (serial_->available()) {
-        sentence_complete = gps_->encode(static_cast<char>(serial_->read())) || sentence_complete;
-        data_.last_nmea_ms = millis();
+        const char c = static_cast<char>(serial_->read());
+        data_.last_uart_byte_ms = millis();
+        ++data_.uart_bytes_received;
+        if (gps_->encode(c)) {
+            sentence_complete = true;
+            data_.last_nmea_ms = data_.last_uart_byte_ms;
+            ++data_.valid_nmea_sentences;
+        }
     }
-    if (!sentence_complete && !gps_->location.isUpdated()) return false;
+    data_.failed_nmea_checksums = gps_->failedChecksum();
+    if (!sentence_complete) {
+        invalidateStaleFix(now);
+        recoverSilentModule(now);
+        return false;
+    }
 
     data_.latitude = gps_->location.lat();
     data_.longitude = gps_->location.lng();
@@ -52,7 +121,7 @@ bool GPS::update() {
     data_.satellites = gps_->satellites.isValid() ? static_cast<int>(gps_->satellites.value()) : 0;
     data_.fix_valid = gps_->location.isValid() && gps_->location.age() < cfg::GPS_LOSS_TIMEOUT_MS;
     data_.valid = data_.fix_valid;
-    data_.timestamp_ms = millis();
+    data_.timestamp_ms = now;
 
     // Validate
     logic::GPSQualityConfig qcfg;
