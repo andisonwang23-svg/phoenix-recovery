@@ -7,6 +7,7 @@
 #include <cstdint>
 #include "logic/state_machine.h"
 #include "logic/drop_test_controller.h"
+#include "logic/tilt_stabilizer.h"
 
 namespace phoenix {
 
@@ -36,6 +37,7 @@ struct VehicleState {
     float gps_course_deg = 0.0f;
     float hdop = 0.0f;
     int satellite_count = 0;
+    int satellites_in_view = 0;
     bool gps_valid = false;
     bool gps_nmea_active = false;
     uint32_t gps_last_valid_ms = 0;
@@ -111,8 +113,20 @@ struct VehicleState {
     uint16_t lora_remote_sequence = 0;
     uint32_t lora_remote_accepted_count = 0;
     uint32_t lora_remote_rejected_count = 0;
+    bool lora_bench_servo_active = false;
     float lora_remote_servo1_command = 0.0f;
     float lora_remote_servo2_command = 0.0f;
+
+    // Explicitly armed IMU/barometer ground roll-stabilization test. GPS is
+    // intentionally absent from this controller. It is never a flight mode.
+    bool tilt_stabilizer_requested = false;
+    bool tilt_stabilizer_active = false;
+    bool tilt_stabilizer_neutral = true;
+    logic::TiltStabilizerStatus tilt_stabilizer_status =
+        logic::TiltStabilizerStatus::OFF;
+    float tilt_reference_roll_deg = 0.0f;
+    float tilt_roll_error_deg = 0.0f;
+    float tilt_control_command = 0.0f;
 
     // Debug / event log indices
     uint16_t event_log_head = 0;
@@ -170,6 +184,8 @@ struct VehicleState {
     uint32_t baro_last_update_ms = 0;
     uint32_t gps_last_update_ms = 0;
     uint32_t servo_last_update_ms = 0;
+    bool servo_healthy = false;
+    uint8_t reset_reason = 0;
 
     // Status flags
     bool armed = false;

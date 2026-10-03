@@ -14,12 +14,12 @@ namespace telemetry {
 #pragma pack(push, 1)
 
 // ---------------------------------------------------------------------------
-// Telemetry packet v1 (fixed layout, 16-bit aligned)
+// Telemetry packet fixed layout; wire-format version is stored in `version`.
 // ---------------------------------------------------------------------------
 struct TelemetryPacketV1 {
     // Header
     uint8_t  magic[2] = {0x50, 0x52};  // 'P','R' - Phoenix Recovery
-    uint8_t  version = 4;
+    uint8_t  version = 7;
     uint8_t  sequence = 0;
 
     // Timestamp
@@ -38,7 +38,9 @@ struct TelemetryPacketV1 {
     int16_t  gps_course_deg = 0;   // degrees * 100
     int16_t  hdop_x100 = 0;        // HDOP * 100
     uint8_t  satellites = 0;
+    uint8_t  satellites_in_view = 0;
     uint8_t  gps_valid = 0;
+    uint8_t  gnss_diagnostic_reserved = 0;
 
     // Altitude / vertical
     int16_t  altitude_agl_m = 0;       // meters * 10
@@ -86,6 +88,22 @@ struct TelemetryPacketV1 {
     uint32_t drop_test_canopy_ms = 0;
     uint32_t drop_test_stable_ms = 0;
     uint32_t drop_test_landing_ms = 0;
+
+    // Ground roll-stabilization test (introduced in telemetry v5)
+    uint8_t  tilt_stabilizer_status = 0;
+    uint8_t  tilt_stabilizer_flags = 0; // bit0 requested, bit1 active, bit2 neutral
+    int16_t  tilt_reference_roll_deg = 0; // degrees * 100
+    int16_t  tilt_roll_error_deg = 0;     // degrees * 100
+    int16_t  tilt_control_command = 0;    // signed brake fraction * 10000
+
+    // Ground-command acknowledgement and bench interlocks (telemetry v7).
+    uint16_t remote_command_sequence = 0;
+    uint16_t remote_accepted_count = 0;
+    uint16_t remote_rejected_count = 0;
+    uint8_t  remote_status_flags = 0; // bit0 enabled, bit1 link, bit2 allowed,
+                                     // bit3 manual, bit4 bench, bit5 armed,
+                                     // bit6 servo healthy
+    uint8_t  reset_reason = 0;
 
     // CRC (CCITT-16)
     uint16_t crc = 0;

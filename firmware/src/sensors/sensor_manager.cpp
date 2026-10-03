@@ -217,6 +217,7 @@ void SensorManager::updateVehicleState() {
     state_.gps_course_deg = gps_data.course_deg;
     state_.hdop = gps_data.hdop;
     state_.satellite_count = gps_data.satellites;
+    state_.satellites_in_view = gps_data.satellites_in_view;
     state_.gps_nmea_age_ms = gps_data.last_nmea_ms > 0 ? millis() - gps_data.last_nmea_ms : UINT32_MAX;
     state_.gps_nmea_active = gps_data.last_nmea_ms > 0 &&
         state_.gps_nmea_age_ms < cfg::GPS_NMEA_ACTIVE_TIMEOUT_MS;

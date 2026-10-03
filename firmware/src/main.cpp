@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <esp_system.h>
 #include "config.h"
 #include "vehicle_state.h"
 
@@ -19,6 +20,7 @@
 #include "logic/flight_coordinator.h"
 #include "logic/drop_test_controller.h"
 #include "logic/bench_servo_gate.h"
+#include "logic/tilt_stabilizer.h"
 #include "comms/lora.h"
 #include "comms/wifi_manager.h"
 #include "telemetry/telemetry_packet.h"
@@ -36,6 +38,7 @@ static estimation::StateEstimator estimator;
 static control::ServoController servos;
 static logic::FlightCoordinator coordinator;
 static logic::DropTestController drop_test_controller;
+static logic::TiltStabilizer tilt_stabilizer;
 static comms::LoRaTelemetry lora;
 static comms::WiFiManager wifi;
 static phoenix::safety::HealthMonitor health;
@@ -79,7 +82,29 @@ static float lora_remote_servo1_command = 0.0f;
 static float lora_remote_servo2_command = 0.0f;
 static bool lora_bench_servo_active = false;
 static uint32_t lora_bench_servo_expires_ms = 0;
+static bool lora_tilt_stabilizer_requested = false;
+static uint32_t lora_tilt_stabilizer_expires_ms = 0;
+static bool lora_tilt_stabilizer_restart_locked = false;
 static uint16_t next_drop_test_id = 1;
+
+static logic::TiltStabilizerConfig tiltStabilizerConfig() {
+    logic::TiltStabilizerConfig c;
+    c.kp_per_deg = cfg::TILT_STABILIZER_KP_PER_DEG;
+    c.kd_per_dps = cfg::TILT_STABILIZER_KD_PER_DPS;
+    c.roll_deadband_deg = cfg::TILT_STABILIZER_DEADBAND_DEG;
+    c.roll_rate_deadband_dps = cfg::TILT_STABILIZER_RATE_DEADBAND_DPS;
+    c.max_brake_command = cfg::TILT_STABILIZER_MAX_BRAKE_COMMAND;
+    c.command_rate_limit_per_s = cfg::TILT_STABILIZER_COMMAND_RATE_PER_S;
+    c.reversal_guard_ms = cfg::TILT_STABILIZER_REVERSAL_GUARD_MS;
+    c.max_duration_ms = cfg::TILT_STABILIZER_MAX_DURATION_MS;
+    c.max_vertical_speed_mps = cfg::TILT_STABILIZER_MAX_VERTICAL_SPEED_MPS;
+    c.max_vertical_accel_mps2 = cfg::TILT_STABILIZER_MAX_VERTICAL_ACCEL_MPS2;
+    c.max_roll_error_deg = cfg::TILT_STABILIZER_MAX_ROLL_ERROR_DEG;
+    c.max_abs_pitch_deg = cfg::TILT_STABILIZER_MAX_ABS_PITCH_DEG;
+    c.max_roll_rate_dps = cfg::TILT_STABILIZER_MAX_ROLL_RATE_DPS;
+    c.correction_sign = cfg::TILT_STABILIZER_CORRECTION_SIGN;
+    return c;
+}
 
 static logic::DropTestConfig dropTestConfig() {
     logic::DropTestConfig c;
@@ -140,6 +165,7 @@ static logic::CoordinatorConfig coordinatorConfig() {
 void setup() {
     setupSerial();
     printBanner();
+    vehicle.reset_reason = static_cast<uint8_t>(esp_reset_reason());
 
     Serial.println("[BOOT] Starting PHOENIX RECOVERY...");
 
@@ -178,6 +204,7 @@ void setup() {
 
     coordinator = logic::FlightCoordinator(coordinatorConfig());
     drop_test_controller = logic::DropTestController(dropTestConfig());
+    tilt_stabilizer = logic::TiltStabilizer(tiltStabilizerConfig());
     vehicle.configuration_version = cfg::CONFIG_VERSION;
 
     // Initialize logging
@@ -359,6 +386,53 @@ void loop() {
     }
     previous_preflight_launch_warning = command.preflight_launch_warning;
 
+    // ---- Explicit IMU/barometer ground roll-stabilization test ----
+    // This controller is deliberately outside the flight coordinator and is
+    // accepted only through the same prelaunch service gate as an unloaded
+    // bench command. It cannot run after launch, while armed, or during a drop
+    // recording. GPS is not consulted.
+    const bool tilt_preflight_state =
+        command.state == logic::FlightState::SELF_TEST ||
+        command.state == logic::FlightState::PAD_SAFE;
+    logic::TiltStabilizerInput tilt_in;
+    tilt_in.now_ms = now;
+    tilt_in.dt_s = dt_s;
+    tilt_in.command_fresh = lora_tilt_stabilizer_requested &&
+        static_cast<int32_t>(lora_tilt_stabilizer_expires_ms - now) > 0;
+    tilt_in.preflight_allowed = tilt_preflight_state && benchServoActuationAllowed(now);
+    tilt_in.imu_valid = vehicle.imu_valid && vehicle.imu_age_ms <= cfg::SENSOR_TIMEOUT_MS;
+    tilt_in.barometer_valid = vehicle.barometer_valid &&
+                             vehicle.baro_age_ms <= cfg::SENSOR_TIMEOUT_MS;
+    tilt_in.servo_valid = servos.isHealthy();
+    tilt_in.roll_deg = vehicle.roll_deg;
+    tilt_in.pitch_deg = vehicle.pitch_deg;
+    tilt_in.roll_rate_dps = vehicle.gyro_x_dps;
+    tilt_in.vertical_speed_mps = vehicle.vertical_speed_mps;
+    tilt_in.vertical_accel_mps2 = vehicle.vertical_accel_mps2;
+    const logic::TiltStabilizerOutput tilt_output = tilt_stabilizer.update(tilt_in);
+    if (tilt_output.status == logic::TiltStabilizerStatus::DURATION_EXPIRED) {
+        lora_tilt_stabilizer_requested = false;
+        lora_tilt_stabilizer_restart_locked = true;
+    }
+    vehicle.tilt_stabilizer_requested = lora_tilt_stabilizer_requested;
+    vehicle.tilt_stabilizer_active = tilt_output.active;
+    vehicle.tilt_stabilizer_neutral = tilt_output.immediate_neutral ||
+                                      fabsf(tilt_output.signed_command) < 0.0005f;
+    vehicle.tilt_stabilizer_status = tilt_output.status;
+    vehicle.tilt_reference_roll_deg = tilt_output.reference_roll_deg;
+    vehicle.tilt_roll_error_deg = tilt_output.roll_error_deg;
+    vehicle.tilt_control_command = tilt_output.signed_command;
+
+    static bool previous_tilt_active = false;
+    if (!previous_tilt_active && tilt_output.active) {
+        ring_buf.pushEvent("TILT_STABILIZER_ACTIVE");
+        flash_log.logEvent("TILT_STABILIZER_ACTIVE");
+    } else if (previous_tilt_active && !tilt_output.active) {
+        ring_buf.pushEvent("TILT_STABILIZER_NEUTRAL");
+        flash_log.logEvent("TILT_STABILIZER_NEUTRAL");
+    }
+    previous_tilt_active = tilt_output.active;
+
     health.update(vehicle);
     const bool ground_servo_test_active =
         cfg::PAYLOAD_WIFI_ENABLED && wifi.isServoTestActive();
@@ -383,6 +457,13 @@ void loop() {
     } else if (command.failsafe_active || command.state == logic::FlightState::LANDED ||
         vehicle.drop_test_neutral_lock) {
         servos.emergencyNeutral();
+    } else if (tilt_output.active) {
+        servos.setBrakeCommands(tilt_output.left_brake, tilt_output.right_brake);
+        servos.update();
+    } else if (lora_tilt_stabilizer_requested) {
+        // A requested test with a blocked sensor/motion gate must never fall
+        // through to another actuator owner.
+        servos.emergencyNeutral();
     } else if (ground_servo_test_active &&
                (command.state == logic::FlightState::PAD_SAFE ||
                 command.state == logic::FlightState::SELF_TEST)) {
@@ -395,6 +476,8 @@ void loop() {
         servos.update();
     }
     // Publish the controller's actual outputs for telemetry and the dashboard.
+    vehicle.lora_bench_servo_active = lora_bench_servo_active;
+    vehicle.servo_healthy = servos.isHealthy();
     vehicle.left_servo_command = servos.getLeftCommand();
     vehicle.right_servo_command = servos.getRightCommand();
     vehicle.left_servo_us = servos.getLeftUs();
@@ -459,11 +542,10 @@ bool remoteControlAllowedForState(logic::FlightState state) {
 }
 
 bool benchServoActuationAllowed(uint32_t now) {
+    (void)now;
     logic::BenchServoGateInput gate;
     gate.flight_state = vehicle.flight_state;
-    gate.now_ms = now;
     gate.launch_ms = vehicle.launch_ms;
-    gate.allowed_window_ms = cfg::LORA_BENCH_TEST_WINDOW_MS;
     gate.drop_test_recording = vehicle.drop_test_recording;
     gate.armed = vehicle.armed;
     gate.servo_healthy = servos.isHealthy();
@@ -482,6 +564,10 @@ static void publishDropTestOutput(const logic::DropTestOutput& out) {
     vehicle.drop_test_landing_candidate_ms = out.landing_candidate_ms;
     vehicle.drop_test_landing_confirm_ms = out.landing_confirm_ms;
     vehicle.drop_test_log_closed_ms = out.log_closed_ms;
+    // The recorder arm is a live interlock, not a permanent latch. Keeping it
+    // synchronized here makes abort/completion release later bench testing.
+    vehicle.armed = out.recording;
+    vehicle.armed_ms = out.recording ? out.armed_ms : 0;
 
     struct EventName { uint16_t bit; const char* name; };
     static const EventName names[] = {
@@ -546,9 +632,6 @@ bool armDropTest(uint32_t now) {
     // The new controller is intentionally stricter: an inert recording run is
     // always neutral-locked, regardless of radio or dashboard state.
     vehicle.drop_test_neutral_lock = true;
-    vehicle.armed = true;
-    vehicle.armed_ms = now;
-
     servos.emergencyNeutral();
     ring_buf.pushEvent("DROP_TEST_ARMED");
     flash_log.logEvent("DROP_TEST_ARMED");
@@ -643,6 +726,14 @@ void updateLoRaRemoteControl() {
         ring_buf.pushEvent("LORA_BENCH_SERVO_NEUTRAL");
         flash_log.logEvent("LORA_BENCH_SERVO_NEUTRAL");
     }
+    if (lora_tilt_stabilizer_requested &&
+        static_cast<int32_t>(now - lora_tilt_stabilizer_expires_ms) >= 0) {
+        lora_tilt_stabilizer_requested = false;
+        tilt_stabilizer.disarm(logic::TiltStabilizerStatus::COMMAND_TIMEOUT);
+        servos.emergencyNeutral();
+        ring_buf.pushEvent("TILT_STABILIZER_COMMAND_TIMEOUT");
+        flash_log.logEvent("TILT_STABILIZER_COMMAND_TIMEOUT");
+    }
 
     if (!cfg::LORA_REMOTE_CONTROL_ENABLED || !lora_remote_runtime_enabled || !lora.isHealthy()) {
         vehicle.lora_remote_manual_active = false;
@@ -688,6 +779,9 @@ void updateLoRaRemoteControl() {
         case comms::LoRaRemoteCommandType::NEUTRAL:
             lora_remote_manual_active = false;
             lora_bench_servo_active = false;
+            lora_tilt_stabilizer_requested = false;
+            lora_tilt_stabilizer_restart_locked = false;
+            tilt_stabilizer.disarm();
             lora_remote_servo1_command = 0.0f;
             lora_remote_servo2_command = 0.0f;
             vehicle.lora_remote_accepted_count++;
@@ -712,6 +806,9 @@ void updateLoRaRemoteControl() {
                                                     -cfg::LORA_BENCH_MAX_SERVO_COMMAND,
                                                     cfg::LORA_BENCH_MAX_SERVO_COMMAND);
             lora_remote_manual_active = false;
+            lora_tilt_stabilizer_requested = false;
+            lora_tilt_stabilizer_restart_locked = false;
+            tilt_stabilizer.disarm();
             lora_bench_servo_active = true;
             lora_bench_servo_expires_ms = now + cfg::LORA_BENCH_SERVO_TIMEOUT_MS;
             vehicle.lora_remote_accepted_count++;
@@ -720,6 +817,8 @@ void updateLoRaRemoteControl() {
             break;
         }
         case comms::LoRaRemoteCommandType::ARM_DROP_TEST:
+            lora_tilt_stabilizer_requested = false;
+            tilt_stabilizer.disarm();
             if (armDropTest(now)) {
                 vehicle.lora_remote_accepted_count++;
             } else {
@@ -764,15 +863,60 @@ void updateLoRaRemoteControl() {
                                                    -cfg::LORA_REMOTE_MAX_BRAKE_COMMAND,
                                                    cfg::LORA_REMOTE_MAX_BRAKE_COMMAND);
             lora_remote_manual_active = true;
+            lora_tilt_stabilizer_requested = false;
+            tilt_stabilizer.disarm();
             lora_remote_command_expires_ms = now + cfg::LORA_REMOTE_COMMAND_TIMEOUT_MS;
             vehicle.lora_remote_accepted_count++;
             ring_buf.pushEvent("LORA_REMOTE_MANUAL_ACTIVE");
             break;
         }
+        case comms::LoRaRemoteCommandType::START_TILT_STABILIZER: {
+            const bool preflight_state =
+                vehicle.flight_state == logic::FlightState::SELF_TEST ||
+                vehicle.flight_state == logic::FlightState::PAD_SAFE;
+            const bool safe = cfg::TILT_STABILIZER_TEST_ENABLED &&
+                !lora_tilt_stabilizer_restart_locked &&
+                preflight_state && benchServoActuationAllowed(now) &&
+                vehicle.imu_valid && vehicle.barometer_valid &&
+                vehicle.imu_age_ms <= cfg::SENSOR_TIMEOUT_MS &&
+                vehicle.baro_age_ms <= cfg::SENSOR_TIMEOUT_MS;
+            if (!safe) {
+                lora_tilt_stabilizer_requested = false;
+                tilt_stabilizer.disarm(logic::TiltStabilizerStatus::INTERLOCK);
+                servos.emergencyNeutral();
+                vehicle.lora_remote_rejected_count++;
+                ring_buf.pushEvent("TILT_STABILIZER_REJECTED");
+                break;
+            }
+            lora_remote_manual_active = false;
+            lora_bench_servo_active = false;
+            if (!tilt_stabilizer.isArmed()) {
+                tilt_stabilizer.arm(now, vehicle.roll_deg);
+                ring_buf.pushEvent("TILT_STABILIZER_ARMED");
+                flash_log.logEvent("TILT_STABILIZER_ARMED");
+            }
+            lora_tilt_stabilizer_requested = true;
+            lora_tilt_stabilizer_expires_ms =
+                now + cfg::TILT_STABILIZER_COMMAND_TIMEOUT_MS;
+            vehicle.lora_remote_accepted_count++;
+            break;
+        }
+        case comms::LoRaRemoteCommandType::STOP_TILT_STABILIZER:
+            lora_tilt_stabilizer_requested = false;
+            lora_tilt_stabilizer_restart_locked = false;
+            tilt_stabilizer.disarm();
+            servos.emergencyNeutral();
+            vehicle.lora_remote_accepted_count++;
+            ring_buf.pushEvent("TILT_STABILIZER_STOPPED");
+            flash_log.logEvent("TILT_STABILIZER_STOPPED");
+            break;
         case comms::LoRaRemoteCommandType::DISABLE_REMOTE:
             lora_remote_runtime_enabled = false;
             lora_remote_manual_active = false;
             lora_bench_servo_active = false;
+            lora_tilt_stabilizer_requested = false;
+            lora_tilt_stabilizer_restart_locked = false;
+            tilt_stabilizer.disarm();
             lora_remote_servo1_command = 0.0f;
             lora_remote_servo2_command = 0.0f;
             vehicle.lora_remote_accepted_count++;
@@ -956,8 +1100,9 @@ void printStatus() {
                   (unsigned long)baro.last_hardware_success_ms,
                   (unsigned long)baro.last_hardware_failure_ms,
                   (unsigned long)baro.last_quality_rejection_ms);
-    Serial.printf("GPS: %s sats=%d nmea=%s age=%lums uart_bytes=%lu sentences=%lu checksum_fail=%lu recoveries=%lu (%.6f, %.6f)\n",
+    Serial.printf("GPS: %s used=%d visible=%d nmea=%s age=%lums uart_bytes=%lu sentences=%lu checksum_fail=%lu recoveries=%lu (%.6f, %.6f)\n",
                   vehicle.gps_valid ? "FIX" : "NO FIX", vehicle.satellite_count,
+                  vehicle.satellites_in_view,
                   gps.last_nmea_ms > 0 ? "ACTIVE" : "NONE", (unsigned long)nmea_age,
                   (unsigned long)gps.uart_bytes_received,
                   (unsigned long)gps.valid_nmea_sentences,
@@ -987,6 +1132,13 @@ void printStatus() {
                   vehicle.right_servo_turn_deg, vehicle.right_servo_angle_deg);
     Serial.printf("LORA: %s packets=%lu\n", lora.isHealthy() ? "READY" : "FAILED",
                   (unsigned long)vehicle.telemetry_ack_count);
+    Serial.printf("LORA COMMANDS: seq=%u accepted=%lu rejected=%lu bench=%s armed=%s link=%s\n",
+                  vehicle.lora_remote_sequence,
+                  (unsigned long)vehicle.lora_remote_accepted_count,
+                  (unsigned long)vehicle.lora_remote_rejected_count,
+                  lora_bench_servo_active ? "ACTIVE" : "OFF",
+                  vehicle.armed ? "YES" : "NO",
+                  vehicle.lora_remote_link_active ? "LIVE" : "STALE");
     Serial.printf("Loop: %.1f Hz, Heap: %d bytes\n", vehicle.loop_rate_hz, ESP.getFreeHeap());
     Serial.printf("Failsafe: %s (%s)\n",
                   vehicle.failure_code == logic::FailCode::FAIL_NONE ? "INACTIVE" : "ACTIVE",

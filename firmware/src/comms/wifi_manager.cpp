@@ -358,7 +358,7 @@ String WiFiManager::getStatusJSON() {
         "\"sensors\":{"
             "\"imu\":{\"valid\":%s,\"roll\":%.1f,\"pitch\":%.1f,\"yaw\":%.1f,\"gyro_x\":%.1f,\"gyro_y\":%.1f,\"gyro_z\":%.1f,\"angular_rate\":%.1f,\"vertical_accel\":%.2f,\"age_ms\":%u},"
             "\"baro\":{\"valid\":%s,\"pressure_hpa\":%.2f,\"temperature_c\":%.1f,\"altitude_raw\":%.1f,\"altitude_agl\":%.1f,\"vs\":%.2f,\"age_ms\":%u},"
-            "\"gps\":{\"valid\":%s,\"fix\":%s,\"uart_active\":%s,\"nmea_age_ms\":%u,\"lat\":%.7f,\"lon\":%.7f,\"altitude\":%.1f,\"sats\":%d,\"hdop\":%.1f,\"speed\":%.1f,\"course\":%.1f,\"age_ms\":%u}"
+            "\"gps\":{\"valid\":%s,\"fix\":%s,\"uart_active\":%s,\"nmea_age_ms\":%u,\"lat\":%.7f,\"lon\":%.7f,\"altitude\":%.1f,\"sats\":%d,\"sats_in_view\":%d,\"hdop\":%.1f,\"speed\":%.1f,\"course\":%.1f,\"age_ms\":%u}"
         "},"
         "\"navigation\":{"
             "\"target_lat\":%.7f,"
@@ -409,7 +409,7 @@ String WiFiManager::getStatusJSON() {
         state_->altitude_agl_m, state_->vertical_speed_mps, state_->baro_age_ms,
         state_->gps_valid ? "true" : "false", state_->gps_valid ? "true" : "false",
         state_->gps_nmea_active ? "true" : "false", state_->gps_nmea_age_ms,
-        state_->latitude, state_->longitude, state_->gps_altitude_m, state_->satellite_count, state_->hdop,
+        state_->latitude, state_->longitude, state_->gps_altitude_m, state_->satellite_count, state_->satellites_in_view, state_->hdop,
         state_->ground_speed_mps, state_->gps_course_deg, state_->gps_age_ms,
         state_->target_latitude, state_->target_longitude,
         state_->distance_to_target_m, state_->target_bearing_deg,
@@ -425,7 +425,7 @@ String WiFiManager::getSensorsJSON() {
         "{"
         "\"imu\":{\"valid\":%s,\"roll\":%.1f,\"pitch\":%.1f,\"yaw\":%.1f,\"gyro_x\":%.1f,\"gyro_y\":%.1f,\"gyro_z\":%.1f,\"angular_rate\":%.1f,\"vertical_accel\":%.2f,\"age_ms\":%u},"
         "\"baro\":{\"valid\":%s,\"pressure_hpa\":%.2f,\"temperature_c\":%.1f,\"altitude_raw\":%.1f,\"altitude_agl\":%.1f,\"vs\":%.2f,\"age_ms\":%u},"
-        "\"gps\":{\"valid\":%s,\"fix\":%s,\"uart_active\":%s,\"nmea_age_ms\":%u,\"lat\":%.7f,\"lon\":%.7f,\"altitude\":%.1f,\"sats\":%d,\"hdop\":%.1f,\"speed\":%.1f,\"course\":%.1f,\"age_ms\":%u}"
+        "\"gps\":{\"valid\":%s,\"fix\":%s,\"uart_active\":%s,\"nmea_age_ms\":%u,\"lat\":%.7f,\"lon\":%.7f,\"altitude\":%.1f,\"sats\":%d,\"sats_in_view\":%d,\"hdop\":%.1f,\"speed\":%.1f,\"course\":%.1f,\"age_ms\":%u}"
         "}",
         state_->imu_valid ? "true" : "false", state_->roll_deg, state_->pitch_deg, state_->yaw_deg,
         state_->gyro_x_dps, state_->gyro_y_dps, state_->gyro_z_dps, state_->angular_rate_dps, state_->vertical_accel_mps2, state_->imu_age_ms,
@@ -434,7 +434,7 @@ String WiFiManager::getSensorsJSON() {
         state_->altitude_agl_m, state_->vertical_speed_mps, state_->baro_age_ms,
         state_->gps_valid ? "true" : "false", state_->gps_valid ? "true" : "false",
         state_->gps_nmea_active ? "true" : "false", state_->gps_nmea_age_ms,
-        state_->latitude, state_->longitude, state_->gps_altitude_m, state_->satellite_count, state_->hdop,
+        state_->latitude, state_->longitude, state_->gps_altitude_m, state_->satellite_count, state_->satellites_in_view, state_->hdop,
         state_->ground_speed_mps, state_->gps_course_deg, state_->gps_age_ms
     );
     return String(buf);
@@ -962,7 +962,7 @@ function updateSensors(d) {
     document.getElementById('baroSnapshot').className = 'value '+(baroOk?'ok':'err');
     document.getElementById('gpsSnapshot').textContent =
         (d.gps.fix ? 'FIX ' : (d.gps.uart_active ? 'NMEA, NO FIX ' : 'NO UART DATA ')) +
-        d.gps.sats+' sats / '+d.gps.lat.toFixed(7)+', '+d.gps.lon.toFixed(7);
+        d.gps.sats+' used / '+d.gps.sats_in_view+' visible / '+d.gps.lat.toFixed(7)+', '+d.gps.lon.toFixed(7);
     document.getElementById('gpsSnapshot').className = 'value '+(gpsOk?'ok':(d.gps.uart_active?'warn':'err'));
     document.getElementById('sensorAges').textContent =
         'IMU '+d.imu.age_ms+' ms / BARO '+d.baro.age_ms+' ms / GPS '+formatAge(d.gps.age_ms);

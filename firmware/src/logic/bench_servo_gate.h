@@ -7,9 +7,7 @@ namespace logic {
 
 struct BenchServoGateInput {
     FlightState flight_state = FlightState::BOOT;
-    uint32_t now_ms = 0;
     uint32_t launch_ms = 0;
-    uint32_t allowed_window_ms = 0;
     bool drop_test_recording = false;
     bool armed = false;
     bool servo_healthy = false;
@@ -30,8 +28,7 @@ inline bool benchServoTestAllowed(const BenchServoGateInput& in) {
            in.launch_ms == 0 &&
            !in.drop_test_recording &&
            !in.armed &&
-           in.servo_healthy &&
-           in.now_ms <= in.allowed_window_ms;
+           in.servo_healthy;
 }
 
 } // namespace logic

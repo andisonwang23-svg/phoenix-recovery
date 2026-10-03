@@ -7,8 +7,6 @@ using namespace logic;
 static BenchServoGateInput baseInput() {
     BenchServoGateInput in;
     in.flight_state = FlightState::SELF_TEST;
-    in.now_ms = 1000;
-    in.allowed_window_ms = 300000;
     in.servo_healthy = true;
     return in;
 }
@@ -45,13 +43,15 @@ void airborne_and_landed_states_are_blocked() {
     TEST_ASSERT_FALSE(benchServoTestAllowed(in));
 }
 
-void unhealthy_servos_or_expired_window_are_blocked() {
+void unhealthy_servos_are_blocked_but_uptime_does_not_expire_prelaunch_testing() {
     auto in = baseInput();
     in.servo_healthy = false;
     TEST_ASSERT_FALSE(benchServoTestAllowed(in));
     in.servo_healthy = true;
-    in.now_ms = in.allowed_window_ms + 1;
-    TEST_ASSERT_FALSE(benchServoTestAllowed(in));
+    // The gate has no uptime field: a supervised prelaunch test remains
+    // available after five minutes. Individual commands still expire in the
+    // LoRa command handler and return the servos to neutral.
+    TEST_ASSERT_TRUE(benchServoTestAllowed(in));
 }
 
 int main() {
@@ -60,6 +60,6 @@ int main() {
     RUN_TEST(sensor_failure_state_is_allowed_only_before_launch);
     RUN_TEST(armed_or_recording_test_is_blocked);
     RUN_TEST(airborne_and_landed_states_are_blocked);
-    RUN_TEST(unhealthy_servos_or_expired_window_are_blocked);
+    RUN_TEST(unhealthy_servos_are_blocked_but_uptime_does_not_expire_prelaunch_testing);
     return UNITY_END();
 }

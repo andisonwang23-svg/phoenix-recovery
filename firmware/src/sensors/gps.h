@@ -23,6 +23,7 @@ public:
         float course_deg = 0.0f;
         float hdop = 0.0f;
         int satellites = 0;
+        int satellites_in_view = 0;
         bool valid = false;
         bool fix_valid = false;
         uint32_t timestamp_ms = 0;
@@ -32,6 +33,7 @@ public:
         uint32_t valid_nmea_sentences = 0;
         uint32_t failed_nmea_checksums = 0;
         uint32_t recovery_attempts = 0;
+        uint32_t last_gsv_ms = 0;
     };
 
     GPS();
@@ -64,6 +66,7 @@ private:
     uint8_t valid_fix_streak_ = 0;
     uint32_t startup_ms_ = 0;
     uint32_t last_recovery_attempt_ms_ = 0;
+    uint32_t gsv_window_start_ms_ = 0;
 
     void powerCycleModule();
     void restartParser();

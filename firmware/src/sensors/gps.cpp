@@ -5,6 +5,7 @@
 
 #include <TinyGPSPlus.h>
 #include "logic/gps_link_health.h"
+#include "logic/nmea_gsv_parser.h"
 
 namespace sensors {
 
@@ -37,6 +38,8 @@ void GPS::restartParser() {
     valid_fix_streak_ = 0;
     data_.valid = false;
     data_.fix_valid = false;
+    nmea_idx_ = 0;
+    gsv_window_start_ms_ = 0;
 }
 
 bool GPS::begin(HardwareSerial& serial) {
@@ -94,15 +97,46 @@ bool GPS::update() {
     if (!initialized_ || !gps_ || !serial_) return false;
 
     const uint32_t now = millis();
+    if (data_.last_gsv_ms != 0 && now - data_.last_gsv_ms > 5000) {
+        data_.satellites_in_view = 0;
+    }
     bool sentence_complete = false;
     while (serial_->available()) {
         const char c = static_cast<char>(serial_->read());
         data_.last_uart_byte_ms = millis();
         ++data_.uart_bytes_received;
+
+        if (c == '$') {
+            nmea_idx_ = 0;
+            nmea_buf_[nmea_idx_++] = c;
+        } else if (nmea_idx_ > 0 && nmea_idx_ < NMEA_BUF_SIZE - 1) {
+            nmea_buf_[nmea_idx_++] = c;
+        }
+
         if (gps_->encode(c)) {
             sentence_complete = true;
             data_.last_nmea_ms = data_.last_uart_byte_ms;
             ++data_.valid_nmea_sentences;
+
+            if (nmea_idx_ > 0) {
+                nmea_buf_[nmea_idx_] = '\0';
+                const int visible = logic::parseGsvSatellitesInView(nmea_buf_);
+                if (visible >= 0) {
+                    const uint32_t sample_ms = data_.last_uart_byte_ms;
+                    if (gsv_window_start_ms_ == 0 ||
+                        sample_ms - gsv_window_start_ms_ > 3000) {
+                        gsv_window_start_ms_ = sample_ms;
+                        data_.satellites_in_view = visible;
+                    } else if (visible > data_.satellites_in_view) {
+                        // Different talkers may emit separate GSV sentences.
+                        // Report the largest current constellation count rather
+                        // than summing and risking double-counting GN talkers.
+                        data_.satellites_in_view = visible;
+                    }
+                    data_.last_gsv_ms = sample_ms;
+                }
+                nmea_idx_ = 0;
+            }
         }
     }
     data_.failed_nmea_checksums = gps_->failedChecksum();

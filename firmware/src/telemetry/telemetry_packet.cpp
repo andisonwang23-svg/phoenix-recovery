@@ -21,7 +21,7 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
 void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& packet, uint8_t sequence) {
     packet.magic[0] = 0x50;
     packet.magic[1] = 0x52;
-    packet.version = 4;
+    packet.version = 7;
     packet.sequence = sequence;
 
     packet.timestamp_ms = state.timestamp_ms;
@@ -38,6 +38,7 @@ void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& pack
     packet.gps_course_deg = static_cast<int16_t>(state.gps_course_deg * 100);
     packet.hdop_x100 = static_cast<int16_t>(state.hdop * 100);
     packet.satellites = static_cast<uint8_t>(state.satellite_count);
+    packet.satellites_in_view = static_cast<uint8_t>(state.satellites_in_view);
     packet.gps_valid = state.gps_valid ? 1 : 0;
 
     // Altitude / vertical
@@ -86,6 +87,24 @@ void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& pack
     packet.drop_test_canopy_ms = state.drop_test_canopy_signature_ms;
     packet.drop_test_stable_ms = state.drop_test_stable_descent_ms;
     packet.drop_test_landing_ms = state.drop_test_landing_confirm_ms;
+    packet.tilt_stabilizer_status = static_cast<uint8_t>(state.tilt_stabilizer_status);
+    packet.tilt_stabilizer_flags = (state.tilt_stabilizer_requested ? 1U : 0U) |
+                                   (state.tilt_stabilizer_active ? 2U : 0U) |
+                                   (state.tilt_stabilizer_neutral ? 4U : 0U);
+    packet.tilt_reference_roll_deg = static_cast<int16_t>(state.tilt_reference_roll_deg * 100.0f);
+    packet.tilt_roll_error_deg = static_cast<int16_t>(state.tilt_roll_error_deg * 100.0f);
+    packet.tilt_control_command = static_cast<int16_t>(state.tilt_control_command * 10000.0f);
+    packet.remote_command_sequence = state.lora_remote_sequence;
+    packet.remote_accepted_count = static_cast<uint16_t>(state.lora_remote_accepted_count);
+    packet.remote_rejected_count = static_cast<uint16_t>(state.lora_remote_rejected_count);
+    packet.remote_status_flags = (state.lora_remote_enabled ? 1U : 0U) |
+                                 (state.lora_remote_link_active ? 2U : 0U) |
+                                 (state.lora_remote_command_allowed ? 4U : 0U) |
+                                 (state.lora_remote_manual_active ? 8U : 0U) |
+                                 (state.lora_bench_servo_active ? 16U : 0U) |
+                                 (state.armed ? 32U : 0U) |
+                                 (state.servo_healthy ? 64U : 0U);
+    packet.reset_reason = state.reset_reason;
 
     // CRC (compute over everything except CRC field)
     size_t crc_len = sizeof(TelemetryPacketV1) - sizeof(uint16_t);

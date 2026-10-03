@@ -35,7 +35,7 @@ interlocks still apply:
 - the payload must never have detected launch;
 - the inert drop recorder must not be armed or recording;
 - the vehicle must not be armed;
-- the command is accepted only during the first five minutes after boot;
+- the command may be repeated at any uptime while launch has never been detected;
 - the payload command expires after 600 ms unless the ground unit repeats it;
 - the ground unit stops repeating after one second and sends neutral; and
 - any expired or invalid condition immediately commands neutral.

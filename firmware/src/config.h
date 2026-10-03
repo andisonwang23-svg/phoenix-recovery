@@ -210,7 +210,7 @@ constexpr double TARGET_LON = 0.0;  // Alias for TARGET_LONGITUDE
 constexpr uint8_t LORA_SYNC_WORD = 0x12;
 constexpr uint32_t TELEMETRY_RATE_HZ = 5;
 constexpr uint32_t LOG_RATE_HZ = 10;
-constexpr uint32_t CONFIG_VERSION = 5;
+constexpr uint32_t CONFIG_VERSION = 6;
 constexpr uint32_t MAIN_LOOP_INTERVAL_MS = 10; // 100 Hz main loop
 
 // ---------------------------------------------------------------------------
@@ -265,7 +265,31 @@ constexpr bool     LORA_BENCH_SERVO_TEST_ENABLED = true;
 // travel until the line geometry and loads are measured.
 constexpr float    LORA_BENCH_MAX_SERVO_COMMAND = 0.40f; // REQUIRES EXPERIMENTAL CALIBRATION
 constexpr uint32_t LORA_BENCH_SERVO_TIMEOUT_MS = 600;
-constexpr uint32_t LORA_BENCH_TEST_WINDOW_MS = 5UL * 60UL * 1000UL;
+
+// ---------------------------------------------------------------------------
+// IMU/barometer ground roll-stabilization test
+// ---------------------------------------------------------------------------
+// Explicitly commanded, short-duration ground/suspended test only. This is not
+// autonomous flight guidance. Every gain and limit below REQUIRES EXPERIMENTAL
+// CALIBRATION using an unloaded rig followed by a restrained inert article.
+constexpr bool     TILT_STABILIZER_TEST_ENABLED = true;
+constexpr uint32_t TILT_STABILIZER_COMMAND_TIMEOUT_MS = 750;
+constexpr uint32_t TILT_STABILIZER_MAX_DURATION_MS = 15000;
+constexpr float    TILT_STABILIZER_KP_PER_DEG = 0.008f;
+constexpr float    TILT_STABILIZER_KD_PER_DPS = 0.003f;
+constexpr float    TILT_STABILIZER_DEADBAND_DEG = 3.0f;
+constexpr float    TILT_STABILIZER_RATE_DEADBAND_DPS = 2.0f;
+constexpr float    TILT_STABILIZER_MAX_BRAKE_COMMAND = 0.15f;
+constexpr float    TILT_STABILIZER_COMMAND_RATE_PER_S = 0.30f;
+constexpr uint32_t TILT_STABILIZER_REVERSAL_GUARD_MS = 1000;
+constexpr float    TILT_STABILIZER_MAX_VERTICAL_SPEED_MPS = 0.75f;
+constexpr float    TILT_STABILIZER_MAX_VERTICAL_ACCEL_MPS2 = 2.0f;
+constexpr float    TILT_STABILIZER_MAX_ROLL_ERROR_DEG = 25.0f;
+constexpr float    TILT_STABILIZER_MAX_ABS_PITCH_DEG = 45.0f;
+constexpr float    TILT_STABILIZER_MAX_ROLL_RATE_DPS = 45.0f;
+// Positive BNO085 roll -> physical left-brake correction. Verify with brake
+// lines disconnected; set to -1 only if the measured correction is reversed.
+constexpr float    TILT_STABILIZER_CORRECTION_SIGN = 1.0f;
 
 // ---------------------------------------------------------------------------
 // Servo channel aliases

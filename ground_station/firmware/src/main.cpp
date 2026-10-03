@@ -18,6 +18,8 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <cmath>
+#include <esp_system.h>
+#include <esp_wifi.h>
 
 #include "config.h"
 #include "comms/lora_remote_protocol.h"
@@ -31,9 +33,11 @@ constexpr const char* GROUND_AP_PASSWORD = "phoenixground";
 constexpr uint8_t GROUND_AP_CHANNEL = 6;
 constexpr uint8_t GROUND_AP_MAX_CLIENTS = 3;
 constexpr uint16_t GROUND_HTTP_PORT = 80;
+constexpr uint32_t DASHBOARD_REFRESH_MS = 1000;
 constexpr uint32_t TELEMETRY_STALE_MS = 2500;
 constexpr uint32_t COMMAND_REPEAT_INTERVAL_MS = 250;
 constexpr uint32_t MANUAL_HOLD_MS = 1500;
+constexpr uint32_t TILT_TEST_HOLD_MS = 15000;
 constexpr float GROUND_MAX_MANUAL_BRAKE = cfg::LORA_REMOTE_MAX_BRAKE_COMMAND;
 
 static Module lora_module(
@@ -62,6 +66,48 @@ static uint32_t telemetry_invalid_count = 0;
 static int16_t last_command_rssi = 0;
 static float last_command_snr = 0.0f;
 static volatile bool lora_packet_received = false;
+static volatile uint32_t wifi_client_connect_count = 0;
+static volatile uint32_t wifi_client_disconnect_count = 0;
+static volatile uint32_t wifi_ap_stop_count = 0;
+static uint32_t last_wifi_connect_ms = 0;
+static uint32_t last_wifi_disconnect_ms = 0;
+static uint8_t last_wifi_client_mac[6] = {0};
+static esp_reset_reason_t boot_reset_reason = ESP_RST_UNKNOWN;
+static bool wifi_setup_complete = false;
+
+void onWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+    if (event == ARDUINO_EVENT_WIFI_AP_STACONNECTED) {
+        wifi_client_connect_count++;
+        last_wifi_connect_ms = millis();
+        memcpy(last_wifi_client_mac, info.wifi_ap_staconnected.mac, 6);
+        Serial.printf("Wi-Fi client connected: %02X:%02X:%02X:%02X:%02X:%02X aid=%u clients=%u\n",
+                      last_wifi_client_mac[0], last_wifi_client_mac[1],
+                      last_wifi_client_mac[2], last_wifi_client_mac[3],
+                      last_wifi_client_mac[4], last_wifi_client_mac[5],
+                      info.wifi_ap_staconnected.aid,
+                      WiFi.softAPgetStationNum());
+    } else if (event == ARDUINO_EVENT_WIFI_AP_STADISCONNECTED) {
+        wifi_client_disconnect_count++;
+        last_wifi_disconnect_ms = millis();
+        memcpy(last_wifi_client_mac, info.wifi_ap_stadisconnected.mac, 6);
+        Serial.printf("Wi-Fi client disconnected: %02X:%02X:%02X:%02X:%02X:%02X aid=%u uptime=%lums\n",
+                      last_wifi_client_mac[0], last_wifi_client_mac[1],
+                      last_wifi_client_mac[2], last_wifi_client_mac[3],
+                      last_wifi_client_mac[4], last_wifi_client_mac[5],
+                      info.wifi_ap_stadisconnected.aid,
+                      static_cast<unsigned long>(millis()));
+    } else if (event == ARDUINO_EVENT_WIFI_AP_STOP) {
+        if (wifi_setup_complete) {
+            wifi_ap_stop_count++;
+            wifi_ok = false;
+            Serial.printf("Wi-Fi AP stopped unexpectedly at uptime=%lums\n",
+                          static_cast<unsigned long>(millis()));
+        }
+    } else if (event == ARDUINO_EVENT_WIFI_AP_START) {
+        wifi_ok = true;
+        Serial.println("Wi-Fi AP driver started");
+    }
+}
 
 void IRAM_ATTR onLoRaPacketReceived() {
     lora_packet_received = true;
@@ -95,6 +141,7 @@ struct TelemetrySnapshot {
     float yaw_deg = 0.0f;
     float angular_rate_dps = 0.0f;
     uint8_t satellites = 0;
+    uint8_t satellites_in_view = 0;
     bool gps_valid = false;
     bool gps_nmea_active = false;
     bool imu_valid = false;
@@ -108,6 +155,25 @@ struct TelemetrySnapshot {
     uint32_t drop_test_canopy_ms = 0;
     uint32_t drop_test_stable_ms = 0;
     uint32_t drop_test_landing_ms = 0;
+    logic::TiltStabilizerStatus tilt_stabilizer_status =
+        logic::TiltStabilizerStatus::OFF;
+    bool tilt_stabilizer_requested = false;
+    bool tilt_stabilizer_active = false;
+    bool tilt_stabilizer_neutral = true;
+    float tilt_reference_roll_deg = 0.0f;
+    float tilt_roll_error_deg = 0.0f;
+    float tilt_control_command = 0.0f;
+    uint16_t remote_command_sequence = 0;
+    uint16_t remote_accepted_count = 0;
+    uint16_t remote_rejected_count = 0;
+    bool remote_enabled = false;
+    bool remote_link_active = false;
+    bool remote_command_allowed = false;
+    bool remote_manual_active = false;
+    bool bench_servo_active = false;
+    bool payload_armed = false;
+    bool servo_healthy = false;
+    uint8_t payload_reset_reason = 0;
     int16_t rssi = 0;
     float snr = 0.0f;
 };
@@ -125,6 +191,14 @@ struct ManualHold {
 
 static ManualHold manual_hold;
 
+struct TiltHold {
+    bool active = false;
+    uint32_t until_ms = 0;
+    uint32_t last_repeat_ms = 0;
+};
+
+static TiltHold tilt_hold;
+
 uint16_t crc16CcittLocal(const uint8_t* data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; ++i) {
@@ -139,7 +213,7 @@ uint16_t crc16CcittLocal(const uint8_t* data, size_t len) {
 
 bool validTelemetryPacket(const telemetry::TelemetryPacketV1& packet) {
     if (packet.magic[0] != 0x50 || packet.magic[1] != 0x52) return false;
-    if (packet.version != 4) return false;
+    if (packet.version != 7) return false;
     const uint16_t expected = crc16CcittLocal(
         reinterpret_cast<const uint8_t*>(&packet),
         sizeof(telemetry::TelemetryPacketV1) - sizeof(packet.crc)
@@ -264,6 +338,7 @@ void pollTelemetry() {
     telemetry.yaw_deg = static_cast<float>(packet.yaw_deg) / 100.0f;
     telemetry.angular_rate_dps = static_cast<float>(packet.angular_rate_dps) / 10.0f;
     telemetry.satellites = packet.satellites;
+    telemetry.satellites_in_view = packet.satellites_in_view;
     telemetry.gps_valid = packet.gps_valid != 0 || packet.gps_fix_valid != 0;
     telemetry.gps_nmea_active = (packet.drop_test_flags & 4U) != 0;
     telemetry.imu_valid = packet.imu_valid != 0;
@@ -277,6 +352,28 @@ void pollTelemetry() {
     telemetry.drop_test_canopy_ms = packet.drop_test_canopy_ms;
     telemetry.drop_test_stable_ms = packet.drop_test_stable_ms;
     telemetry.drop_test_landing_ms = packet.drop_test_landing_ms;
+    telemetry.tilt_stabilizer_status =
+        static_cast<logic::TiltStabilizerStatus>(packet.tilt_stabilizer_status);
+    telemetry.tilt_stabilizer_requested = (packet.tilt_stabilizer_flags & 1U) != 0;
+    telemetry.tilt_stabilizer_active = (packet.tilt_stabilizer_flags & 2U) != 0;
+    telemetry.tilt_stabilizer_neutral = (packet.tilt_stabilizer_flags & 4U) != 0;
+    telemetry.tilt_reference_roll_deg =
+        static_cast<float>(packet.tilt_reference_roll_deg) / 100.0f;
+    telemetry.tilt_roll_error_deg =
+        static_cast<float>(packet.tilt_roll_error_deg) / 100.0f;
+    telemetry.tilt_control_command =
+        static_cast<float>(packet.tilt_control_command) / 10000.0f;
+    telemetry.remote_command_sequence = packet.remote_command_sequence;
+    telemetry.remote_accepted_count = packet.remote_accepted_count;
+    telemetry.remote_rejected_count = packet.remote_rejected_count;
+    telemetry.remote_enabled = (packet.remote_status_flags & 1U) != 0;
+    telemetry.remote_link_active = (packet.remote_status_flags & 2U) != 0;
+    telemetry.remote_command_allowed = (packet.remote_status_flags & 4U) != 0;
+    telemetry.remote_manual_active = (packet.remote_status_flags & 8U) != 0;
+    telemetry.bench_servo_active = (packet.remote_status_flags & 16U) != 0;
+    telemetry.payload_armed = (packet.remote_status_flags & 32U) != 0;
+    telemetry.servo_healthy = (packet.remote_status_flags & 64U) != 0;
+    telemetry.payload_reset_reason = packet.reset_reason;
     telemetry.rssi = radio.getRSSI();
     telemetry.snr = radio.getSNR();
 }
@@ -307,6 +404,33 @@ void updateManualHold() {
     }
 }
 
+void stopTiltHold(bool transmit_stop) {
+    tilt_hold.active = false;
+    if (transmit_stop) {
+        sendCommand(comms::LoRaRemoteCommandType::STOP_TILT_STABILIZER,
+                    0.0f, 0.0f, 0.0, 0.0, true);
+    }
+}
+
+void updateTiltHold() {
+    if (!tilt_hold.active) return;
+    if (telemetry.drop_test_recording) {
+        stopTiltHold(true);
+        last_error = "Tilt stabilization stopped while drop recording is active";
+        return;
+    }
+    const uint32_t now = millis();
+    if (static_cast<int32_t>(now - tilt_hold.until_ms) >= 0) {
+        stopTiltHold(true);
+        return;
+    }
+    if (now - tilt_hold.last_repeat_ms >= COMMAND_REPEAT_INTERVAL_MS) {
+        tilt_hold.last_repeat_ms = now;
+        sendCommand(comms::LoRaRemoteCommandType::START_TILT_STABILIZER,
+                    0.0f, 0.0f, 0.0, 0.0, true);
+    }
+}
+
 void printHelp() {
     Serial.println();
     Serial.println("PHOENIX LoRa ground-control commands:");
@@ -316,6 +440,8 @@ void printHelp() {
     Serial.println("  armdrop                     arm payload-owned inert drop recording");
     Serial.println("  abortdrop                   abort drop recording and command neutral");
     Serial.println("  bench <1|2> <20|40>         timed unloaded prelaunch servo test");
+    Serial.println("  tiltstart                    15 s IMU/barometer ground roll test");
+    Serial.println("  tiltstop                     stop roll test and command neutral");
     Serial.println("  neutral");
     Serial.println("  servo <servo1> <servo2>     values -1.00..+1.00; rocket clamps again");
     Serial.println("  target <latitude> <longitude>");
@@ -384,6 +510,7 @@ void handleLine(String line) {
             return;
         }
         const float amount = static_cast<float>(percent) / 100.0f;
+        stopTiltHold(true);
         manual_hold.active = true;
         manual_hold.bench_mode = true;
         manual_hold.servo1 = servo_number == 1 ? amount : 0.0f;
@@ -395,16 +522,32 @@ void handleLine(String line) {
     } else if (line == "ping") {
         sendCommand(comms::LoRaRemoteCommandType::PING);
     } else if (line == "armdrop") {
+        stopTiltHold(true);
         sendCommand(comms::LoRaRemoteCommandType::ARM_DROP_TEST);
     } else if (line == "abortdrop") {
         manual_hold.active = false;
         manual_hold.bench_mode = false;
         sendCommand(comms::LoRaRemoteCommandType::ABORT_DROP_TEST);
     } else if (line == "neutral") {
+        stopTiltHold(false);
         manual_hold.active = false;
         manual_hold.bench_mode = false;
         sendCommand(comms::LoRaRemoteCommandType::NEUTRAL);
+    } else if (line == "tiltstart") {
+        if (telemetry.drop_test_recording || !telemetry.imu_valid || !telemetry.baro_valid) {
+            Serial.println("tilt test requires idle drop recorder plus healthy IMU and barometer");
+            return;
+        }
+        manual_hold.active = false;
+        tilt_hold.active = true;
+        tilt_hold.until_ms = millis() + TILT_TEST_HOLD_MS;
+        tilt_hold.last_repeat_ms = millis();
+        sendCommand(comms::LoRaRemoteCommandType::START_TILT_STABILIZER);
+    } else if (line == "tiltstop") {
+        stopTiltHold(false);
+        sendCommand(comms::LoRaRemoteCommandType::STOP_TILT_STABILIZER);
     } else if (line == "disable") {
+        stopTiltHold(true);
         manual_hold.active = false;
         manual_hold.bench_mode = false;
         sendCommand(comms::LoRaRemoteCommandType::DISABLE_REMOTE);
@@ -421,6 +564,7 @@ void handleLine(String line) {
         }
         servo1 = constrain(servo1, -GROUND_MAX_MANUAL_BRAKE, GROUND_MAX_MANUAL_BRAKE);
         servo2 = constrain(servo2, -GROUND_MAX_MANUAL_BRAKE, GROUND_MAX_MANUAL_BRAKE);
+        stopTiltHold(true);
         manual_hold.active = true;
         manual_hold.bench_mode = false;
         manual_hold.servo1 = servo1;
@@ -451,13 +595,26 @@ String statusJson() {
     const uint32_t now = millis();
     const uint32_t telemetry_age = telemetry.rx_ms == 0 ? UINT32_MAX : now - telemetry.rx_ms;
     const bool telemetry_fresh = telemetry.valid && telemetry_age <= TELEMETRY_STALE_MS;
-    char buf[4608];
+    // Keep this large formatter buffer out of loopTask's 8 KB stack. The old
+    // automatic 5.2 KB buffer plus snprintf's float formatting overflowed the
+    // stack whenever /api/status was requested, rebooting the ground station.
+    static char buf[6000];
     snprintf(buf, sizeof(buf),
              "{"
              "\"wifi_ok\":%s,"
              "\"radio_ok\":%s,"
              "\"ip\":\"%s\","
              "\"clients\":%d,"
+             "\"uptime_ms\":%lu,"
+             "\"free_heap_bytes\":%u,"
+             "\"reset_reason\":%d,"
+             "\"wifi_connect_count\":%lu,"
+             "\"wifi_disconnect_count\":%lu,"
+             "\"wifi_ap_stop_count\":%lu,"
+             "\"last_wifi_connect_ms\":%lu,"
+             "\"last_wifi_disconnect_ms\":%lu,"
+             "\"wifi_mode\":\"802.11b/g HT20\","
+             "\"dashboard_refresh_ms\":%lu,"
              "\"sent_count\":%lu,"
              "\"failed_count\":%lu,"
              "\"sequence\":%u,"
@@ -465,6 +622,7 @@ String statusJson() {
              "\"last_error\":\"%s\","
              "\"last_send_age_ms\":%lu,"
              "\"manual_hold_active\":%s,"
+             "\"tilt_hold_active\":%s,"
              "\"manual_servo1\":%.3f,"
              "\"manual_servo2\":%.3f,"
              "\"manual_max\":%.3f,"
@@ -501,6 +659,7 @@ String statusJson() {
                 "\"yaw_deg\":%.1f,"
                 "\"angular_rate_dps\":%.1f,"
                 "\"satellites\":%u,"
+                "\"satellites_in_view\":%u,"
                 "\"gps_valid\":%s,"
                 "\"gps_nmea_active\":%s,"
                 "\"imu_valid\":%s,"
@@ -513,13 +672,40 @@ String statusJson() {
                 "\"drop_test_release_ms\":%lu,"
                 "\"drop_test_canopy_ms\":%lu,"
                 "\"drop_test_stable_ms\":%lu,"
-                "\"drop_test_landing_ms\":%lu"
+                "\"drop_test_landing_ms\":%lu,"
+                "\"tilt_stabilizer_status\":\"%s\","
+                "\"tilt_stabilizer_requested\":%s,"
+                "\"tilt_stabilizer_active\":%s,"
+                "\"tilt_stabilizer_neutral\":%s,"
+                "\"tilt_reference_roll_deg\":%.2f,"
+                "\"tilt_roll_error_deg\":%.2f,"
+                "\"tilt_control_command\":%.4f,"
+                "\"remote_command_sequence\":%u,"
+                "\"remote_accepted_count\":%u,"
+                "\"remote_rejected_count\":%u,"
+                "\"remote_enabled\":%s,"
+                "\"remote_link_active\":%s,"
+                "\"remote_command_allowed\":%s,"
+                "\"remote_manual_active\":%s,"
+                "\"bench_servo_active\":%s,"
+                "\"payload_armed\":%s,"
+                "\"servo_healthy\":%s,"
+                "\"payload_reset_reason\":%u"
              "}"
              "}",
              wifi_ok ? "true" : "false",
              radio_ok ? "true" : "false",
              WiFi.softAPIP().toString().c_str(),
              WiFi.softAPgetStationNum(),
+             static_cast<unsigned long>(now),
+             ESP.getFreeHeap(),
+             static_cast<int>(boot_reset_reason),
+             static_cast<unsigned long>(wifi_client_connect_count),
+             static_cast<unsigned long>(wifi_client_disconnect_count),
+             static_cast<unsigned long>(wifi_ap_stop_count),
+             static_cast<unsigned long>(last_wifi_connect_ms),
+             static_cast<unsigned long>(last_wifi_disconnect_ms),
+             static_cast<unsigned long>(DASHBOARD_REFRESH_MS),
              static_cast<unsigned long>(sent_count),
              static_cast<unsigned long>(failed_count),
              sequence_number,
@@ -527,6 +713,7 @@ String statusJson() {
              escapeJson(last_error).c_str(),
              last_send_ms == 0 ? static_cast<unsigned long>(UINT32_MAX) : static_cast<unsigned long>(now - last_send_ms),
              manual_hold.active ? "true" : "false",
+             tilt_hold.active ? "true" : "false",
              manual_hold.servo1,
              manual_hold.servo2,
              GROUND_MAX_MANUAL_BRAKE,
@@ -562,6 +749,7 @@ String statusJson() {
              telemetry.yaw_deg,
              telemetry.angular_rate_dps,
              telemetry.satellites,
+             telemetry.satellites_in_view,
              telemetry.gps_valid ? "true" : "false",
              telemetry.gps_nmea_active ? "true" : "false",
              telemetry.imu_valid ? "true" : "false",
@@ -574,12 +762,32 @@ String statusJson() {
              static_cast<unsigned long>(telemetry.drop_test_release_ms),
              static_cast<unsigned long>(telemetry.drop_test_canopy_ms),
              static_cast<unsigned long>(telemetry.drop_test_stable_ms),
-             static_cast<unsigned long>(telemetry.drop_test_landing_ms));
+             static_cast<unsigned long>(telemetry.drop_test_landing_ms),
+             logic::tiltStabilizerStatusName(telemetry.tilt_stabilizer_status),
+             telemetry.tilt_stabilizer_requested ? "true" : "false",
+             telemetry.tilt_stabilizer_active ? "true" : "false",
+             telemetry.tilt_stabilizer_neutral ? "true" : "false",
+             telemetry.tilt_reference_roll_deg,
+             telemetry.tilt_roll_error_deg,
+             telemetry.tilt_control_command,
+             telemetry.remote_command_sequence,
+             telemetry.remote_accepted_count,
+             telemetry.remote_rejected_count,
+             telemetry.remote_enabled ? "true" : "false",
+             telemetry.remote_link_active ? "true" : "false",
+             telemetry.remote_command_allowed ? "true" : "false",
+             telemetry.remote_manual_active ? "true" : "false",
+             telemetry.bench_servo_active ? "true" : "false",
+             telemetry.payload_armed ? "true" : "false",
+             telemetry.servo_healthy ? "true" : "false",
+             telemetry.payload_reset_reason);
     return String(buf);
 }
 
 void sendJson(int code, const String& body) {
     server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Cache-Control", "no-store, max-age=0");
+    server.sendHeader("Connection", "close");
     server.send(code, "application/json", body);
 }
 
@@ -590,23 +798,58 @@ void handleCommandApi() {
     if (type == "ping") {
         ok = sendCommand(comms::LoRaRemoteCommandType::PING);
     } else if (type == "armdrop") {
+        stopTiltHold(true);
         manual_hold.active = false;
         manual_hold.bench_mode = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::ARM_DROP_TEST);
     } else if (type == "abortdrop") {
+        stopTiltHold(true);
         manual_hold.active = false;
         manual_hold.bench_mode = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::ABORT_DROP_TEST);
     } else if (type == "logindex") {
         ok = sendCommand(comms::LoRaRemoteCommandType::REQUEST_LOG_INDEX);
     } else if (type == "neutral") {
+        stopTiltHold(false);
         manual_hold.active = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::NEUTRAL);
-    } else if (type == "bench") {
-        if (telemetry.drop_test_recording) {
-            sendJson(409, "{\"ok\":false,\"error\":\"Bench test locked while drop recording is active\"}");
+    } else if (type == "tiltstart") {
+        if (telemetry.drop_test_recording || !telemetry.valid || !telemetry.imu_valid ||
+            !telemetry.baro_valid) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Tilt test requires a payload link, healthy IMU/barometer, and idle drop recorder\"}");
             return;
         }
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        tilt_hold.active = true;
+        tilt_hold.until_ms = millis() + TILT_TEST_HOLD_MS;
+        tilt_hold.last_repeat_ms = millis();
+        ok = sendCommand(comms::LoRaRemoteCommandType::START_TILT_STABILIZER);
+    } else if (type == "tiltstop") {
+        stopTiltHold(false);
+        ok = sendCommand(comms::LoRaRemoteCommandType::STOP_TILT_STABILIZER);
+    } else if (type == "bench") {
+        const uint32_t telemetry_age = telemetry.rx_ms == 0
+            ? UINT32_MAX : millis() - telemetry.rx_ms;
+        const bool payload_fresh = telemetry.valid && telemetry_age <= TELEMETRY_STALE_MS;
+        const bool preflight = telemetry.flight_state == logic::FlightState::BOOT ||
+            telemetry.flight_state == logic::FlightState::SELF_TEST ||
+            telemetry.flight_state == logic::FlightState::PRE_LAUNCH ||
+            telemetry.flight_state == logic::FlightState::PAD_SAFE ||
+            telemetry.flight_state == logic::FlightState::FAILSAFE_DESCENT;
+        if (!payload_fresh) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Bench test requires fresh payload telemetry\"}");
+            return;
+        }
+        if (!telemetry.servo_healthy) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Payload reports servo controller unavailable\"}");
+            return;
+        }
+        if (telemetry.payload_armed || telemetry.drop_test_recording || !preflight) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Payload bench interlock is active\"}");
+            return;
+        }
+        stopTiltHold(true);
         const int servo_number = server.hasArg("servo") ? server.arg("servo").toInt() : 0;
         if (servo_number != 1 && servo_number != 2) {
             sendJson(400, "{\"ok\":false,\"error\":\"Choose Servo 1 or Servo 2\"}");
@@ -630,6 +873,7 @@ void handleCommandApi() {
         ok = sendCommand(comms::LoRaRemoteCommandType::BENCH_SERVO,
                          manual_hold.servo1, manual_hold.servo2);
     } else if (type == "disable") {
+        stopTiltHold(true);
         manual_hold.active = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::DISABLE_REMOTE);
     } else if (type == "servo") {
@@ -637,6 +881,7 @@ void handleCommandApi() {
             sendJson(409, "{\"ok\":false,\"error\":\"Manual steering locked while drop recording is active\"}");
             return;
         }
+        stopTiltHold(true);
         float servo1 = server.hasArg("servo1") ? server.arg("servo1").toFloat() : 0.0f;
         float servo2 = server.hasArg("servo2") ? server.arg("servo2").toFloat() : 0.0f;
         servo1 = constrain(servo1, -GROUND_MAX_MANUAL_BRAKE, GROUND_MAX_MANUAL_BRAKE);
@@ -739,9 +984,21 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
 
     <article class="card">
       <div class="cardHead"><h2>Bench Test</h2><span class="tiny">PRELAUNCH · SENSORS OPTIONAL</span></div>
-      <div class="notice">Disconnect brake lines and remove all load first. These tests do not require GPS, IMU, or barometer health. They are accepted only before launch, during the first five minutes after payload boot, and automatically return to neutral.</div>
+      <div class="notice">Disconnect brake lines and remove all load first. These tests do not require GPS, IMU, or barometer health. They may be repeated at any uptime before launch and automatically return to neutral after each short command.</div>
       <div class="buttonGrid"><button class="benchBtn" onclick="bench(1,.20)">Servo 1 · 20%</button><button class="benchBtn" onclick="bench(1,.40)">Servo 1 · 40%</button><button class="benchBtn" onclick="bench(2,.20)">Servo 2 · 20%</button><button class="benchBtn" onclick="bench(2,.40)">Servo 2 · 40%</button></div>
       <div id="benchStatus" class="status">Ready for guarded bench test.</div>
+    </article>
+
+    <article class="card">
+      <div class="cardHead"><h2>IMU Roll-Damping Test</h2><span id="tiltGate" class="tiny">LOCKED</span></div>
+      <div class="notice">Ground/suspended inert test only. Hold the payload upright before starting; that roll becomes the reference. GPS is not used. The barometer and IMU must remain healthy. Pitch is observed but never commanded.</div>
+      <div class="rows">
+        <div class="row"><span class="k">Controller</span><span id="tiltState" class="v">DISABLED</span></div>
+        <div class="row"><span class="k">Reference / error</span><span id="tiltError" class="v">--</span></div>
+        <div class="row"><span class="k">Differential command</span><span id="tiltCommand" class="v">0%</span></div>
+      </div>
+      <div class="commandRow"><button id="tiltStart" class="primary" onclick="startTilt()">Start 15 s Test</button><button onclick="stopTilt()">Stop & Neutral</button></div>
+      <div id="tiltStatus" class="status">Requires healthy IMU and barometer.</div>
     </article>
 
     <article class="card">
@@ -795,10 +1052,21 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
 const el=id=>document.getElementById(id);
 let dropRecordingActive=false;
 let armWaitUntil=0;
-async function api(path){const r=await fetch(path); const j=await r.json(); if(!r.ok) throw new Error(j.error||'request failed'); return j;}
+let refreshBusy=false;
+let refreshTimer=0;
+async function api(path){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),3000);
+  try{
+    const r=await fetch(path,{cache:'no-store',signal:controller.signal});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'request failed');
+    return j;
+  }finally{clearTimeout(timeout)}
+}
 async function command(q,statusId='manualStatus'){
   const box=el(statusId); if(box) box.textContent='Sending…';
-  try { const j=await api('/api/command?'+q); if(q.indexOf('type=armdrop')>=0) armWaitUntil=Date.now()+6500; if(box) box.textContent='Sent: '+j.status.last_command; await refresh(); return true; }
+  try { const j=await api('/api/command?'+q); if(q.indexOf('type=armdrop')>=0) armWaitUntil=Date.now()+6500; if(box) box.textContent='Ground transmitted: '+j.status.last_command+' · waiting for payload confirmation'; await refresh(); return true; }
   catch(e){ if(box) box.textContent='Error: '+e.message; return false; }
 }
 function dropLocked(statusId){
@@ -811,6 +1079,8 @@ function zeroSliders(){el('s1').value=0;el('s2').value=0;updateSliders()}
 function neutral(){zeroSliders();command('type=neutral')}
 function ping(){command('type=ping','targetStatus')}
 function bench(n,a){if(dropLocked('benchStatus'))return;const p=Math.round(a*100);if(confirm('Confirm Servo '+n+' at '+p+'% with brake lines disconnected and no load?'))command('type=bench&servo='+n+'&amount='+a,'benchStatus')}
+function startTilt(){if(dropLocked('tiltStatus'))return;if(confirm('Hold the payload upright and clear the servo/linkage area. Start a 15-second, 15%-maximum roll-damping test?'))command('type=tiltstart','tiltStatus')}
+function stopTilt(){command('type=tiltstop','tiltStatus')}
 function armDrop(){if(confirm('Arm payload-owned drop-test recording? Servos will stay neutral.'))command('type=armdrop','dropStatus')}
 function abortDrop(){if(confirm('Abort drop recording and command neutral?'))command('type=abortdrop','dropStatus')}
 function requestLogIndex(){command('type=logindex','dropStatus')}
@@ -829,6 +1099,9 @@ function armBlockers(t){
   return b;
 }
 async function refresh(){
+  if(refreshBusy)return;
+  refreshBusy=true;
+  clearTimeout(refreshTimer);
   try{
     const s=await api('/api/status'), t=s.telemetry;
     dropRecordingActive=!!t.drop_test_recording;
@@ -838,8 +1111,8 @@ async function refresh(){
     el('alt').textContent=num(t.altitude_agl_m);el('distance').textContent=num(t.distance_to_target_m,0);el('speed').textContent=num(t.ground_speed_mps);
     el('coords').textContent=t.gps_valid?(t.lat.toFixed(7)+', '+t.lon.toFixed(7)):'Waiting for valid fix';
     el('course').textContent=num(t.gps_course_deg)+'° / '+num(t.target_bearing_deg)+'°';el('heading').textContent=num(t.heading_error_deg)+'°';el('vspeed').textContent=num(t.vertical_speed_mps,2)+' m/s';
-    el('gpsBadge').textContent=t.gps_valid?(t.satellites+' SATELLITES · FIX'):(t.gps_nmea_active?'GNSS CONNECTED · SEARCHING':'NO GNSS DATA');
-    health(el('gpsSensor'),el('gpsText'),t.gps_valid,t.gps_valid?'FIX · '+t.satellites+' SAT':(t.gps_nmea_active?'CONNECTED · SEARCHING':'NO DATA'));if(!t.gps_valid&&t.gps_nmea_active)el('gpsSensor').className='sensor';health(el('imuSensor'),el('imuText'),t.imu_valid,t.imu_valid?'HEALTHY':'ERROR');health(el('baroSensor'),el('baroText'),t.baro_valid,t.baro_valid?'HEALTHY':'ERROR');
+    el('gpsBadge').textContent=t.gps_valid?(t.satellites+' USED · FIX'):(t.gps_nmea_active?('SEARCHING · '+t.satellites_in_view+' VISIBLE'):'NO GNSS DATA');
+    health(el('gpsSensor'),el('gpsText'),t.gps_valid,t.gps_valid?('FIX · '+t.satellites+' USED / '+t.satellites_in_view+' VISIBLE'):(t.gps_nmea_active?('CONNECTED · '+t.satellites_in_view+' VISIBLE'):'NO DATA'));if(!t.gps_valid&&t.gps_nmea_active)el('gpsSensor').className='sensor';health(el('imuSensor'),el('imuText'),t.imu_valid,t.imu_valid?'HEALTHY':'ERROR');health(el('baroSensor'),el('baroText'),t.baro_valid,t.baro_valid?'HEALTHY':'ERROR');
     el('dropState').textContent=t.drop_test_state;el('dropId').textContent=t.drop_test_id?('#'+t.drop_test_id):'--';
     const launchRecovery=['ASCENT','APOGEE_DETECT','APOGEE_CONFIRMED','DEPLOYMENT_WAIT','PARAFOIL_STABILIZATION','GUIDED_DESCENT','FINAL_APPROACH','FLARE'].includes(t.flight_state);
     el('recoveryMode').textContent=t.drop_test_recording?'INERT DROP · LOCAL LOG':(launchRecovery?'LAUNCH RECOVERY · AUTO LOG':'AUTO LAUNCH READY');
@@ -853,14 +1126,35 @@ async function refresh(){
     el('roll').textContent=num(t.roll_deg)+'°';el('pitch').textContent=num(t.pitch_deg)+'°';el('yaw').textContent=num(t.yaw_deg)+'°';
     el('servo1Text').textContent=Math.round(t.servo1_cmd*100)+'% · '+t.servo1_us+' µs · '+num(t.servo1_turn_deg)+'°';el('servo2Text').textContent=Math.round(t.servo2_cmd*100)+'% · '+t.servo2_us+' µs · '+num(t.servo2_turn_deg)+'°';
     el('servo1Fill').style.width=Math.min(100,Math.abs(t.servo1_cmd)*100)+'%';el('servo2Fill').style.width=Math.min(100,Math.abs(t.servo2_cmd)*100)+'%';
-    const steer=(t.flight_state==='GUIDED_DESCENT'||t.flight_state==='FINAL_APPROACH')&&!dropRecordingActive;el('sendSteer').disabled=!steer;el('sendTarget').disabled=dropRecordingActive;document.querySelectorAll('.benchBtn').forEach(b=>b.disabled=dropRecordingActive);el('steerGate').textContent=dropRecordingActive?'LOCKED · DROP RECORDING':(steer?'UNLOCKED FOR DESCENT':'LOCKED · '+t.flight_state);el('steerGate').className='tiny '+(steer?'ok':'warn');
+    const tiltReady=t.fresh&&t.imu_valid&&t.baro_valid&&!dropRecordingActive&&(t.flight_state==='SELF_TEST'||t.flight_state==='PAD_SAFE');
+    el('tiltStart').disabled=!tiltReady;
+    el('tiltState').textContent=t.tilt_stabilizer_status;
+    el('tiltError').textContent=num(t.tilt_reference_roll_deg,1)+'° / '+num(t.tilt_roll_error_deg,1)+'°';
+    el('tiltCommand').textContent=Math.round(t.tilt_control_command*100)+'%';
+    el('tiltGate').textContent=t.tilt_stabilizer_active?'ACTIVE · 15% MAX':(tiltReady?'READY':'LOCKED');
+    el('tiltGate').className='tiny '+(t.tilt_stabilizer_active?'ok':tiltReady?'warn':'bad');
+    if(t.tilt_stabilizer_active)el('tiltStatus').textContent='Roll damping active. Stop immediately if correction direction is wrong.';
+    else if(t.tilt_stabilizer_requested)el('tiltStatus').textContent='Requested but neutral: '+t.tilt_stabilizer_status;
+    else el('tiltStatus').textContent=tiltReady?'Hold upright, then start the timed test.':'Requires live payload, preflight state, healthy IMU and barometer.';
+    const benchReady=t.fresh&&t.servo_healthy&&!t.payload_armed&&!dropRecordingActive&&['BOOT','SELF_TEST','PRE_LAUNCH','PAD_SAFE','FAILSAFE_DESCENT'].includes(t.flight_state);
+    document.querySelectorAll('.benchBtn').forEach(b=>b.disabled=!benchReady);
+    if(t.bench_servo_active)el('benchStatus').textContent='PAYLOAD CONFIRMED · command active · Servo 1 '+Math.round(t.servo1_cmd*100)+'% · Servo 2 '+Math.round(t.servo2_cmd*100)+'%';
+    else if(!t.fresh)el('benchStatus').textContent='Locked: payload telemetry is not live.';
+    else if(!t.servo_healthy)el('benchStatus').textContent='Locked: payload reports servo controller unavailable.';
+    else if(t.payload_armed||dropRecordingActive)el('benchStatus').textContent='Locked: payload/drop-test arm is active.';
+    else if(!benchReady)el('benchStatus').textContent='Locked in flight state '+t.flight_state+'.';
+    else el('benchStatus').textContent='Ready · payload accepted '+t.remote_accepted_count+' / rejected '+t.remote_rejected_count+' commands.';
+    const steer=(t.flight_state==='GUIDED_DESCENT'||t.flight_state==='FINAL_APPROACH')&&!dropRecordingActive;el('sendSteer').disabled=!steer;el('sendTarget').disabled=dropRecordingActive;el('steerGate').textContent=dropRecordingActive?'LOCKED · DROP RECORDING':(steer?'UNLOCKED FOR DESCENT':'LOCKED · '+t.flight_state);el('steerGate').className='tiny '+(steer?'ok':'warn');
     el('wifi').textContent=s.wifi_ok?s.ip:'OFF';el('clients').textContent=s.clients;el('radio').textContent=s.radio_ok?'RADIO READY':'RADIO ERROR';el('radio').className='tiny '+(s.radio_ok?'ok':'bad');
     el('signal').textContent=t.valid?(t.rssi+' dBm / '+num(t.snr)+' dB'):'--';el('counts').textContent=s.sent_count+' / '+s.failed_count;el('lastcmd').textContent=s.last_command;el('footerStatus').textContent=s.last_error?('ERROR · '+s.last_error):'LOCAL SYSTEM NOMINAL';
   }catch(e){
     el('linkPill').className='pill offline';el('linkPill').innerHTML='<i class="dot"></i>DASHBOARD ERROR';el('footerStatus').textContent=e.message;
+  }finally{
+    refreshBusy=false;
+    refreshTimer=setTimeout(refresh,1000);
   }
 }
-setInterval(refresh,500); refresh();
+refresh();
 </script>
 </body>
 </html>
@@ -873,6 +1167,7 @@ void setupWeb() {
     const IPAddress subnet(255, 255, 255, 0);
 
     WiFi.persistent(false);
+    WiFi.onEvent(onWiFiEvent);
     WiFi.mode(WIFI_AP);
     WiFi.setSleep(false);
     WiFi.softAPConfig(ap_ip, gateway, subnet);
@@ -881,6 +1176,23 @@ void setupWeb() {
                           GROUND_AP_CHANNEL,
                           false,
                           GROUND_AP_MAX_CLIENTS);
+
+    // Conservative interoperability mode. ESP-IDF normally enables 802.11n;
+    // limiting the AP to legacy b/g prevents HT/A-MPDU negotiation, which is
+    // an Espressif-recommended diagnostic/mitigation for SoftAP disconnects
+    // that occur specifically while traffic is flowing.
+    const esp_err_t protocol_result =
+        esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G);
+    const esp_err_t bandwidth_result = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+
+    wifi_config_t ap_config = {};
+    const esp_err_t config_get_result = esp_wifi_get_config(WIFI_IF_AP, &ap_config);
+    esp_err_t config_set_result = ESP_FAIL;
+    if (config_get_result == ESP_OK) {
+        ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+        ap_config.ap.beacon_interval = 100;
+        config_set_result = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
+    }
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
     dns_ok = dns.start(53, "*", ap_ip);
@@ -906,6 +1218,7 @@ void setupWeb() {
         server.send(302, "text/plain", "");
     });
     server.begin();
+    wifi_setup_complete = true;
 
     Serial.printf("Ground Wi-Fi %s: SSID=%s password=%s IP=%s DNS=%s\n",
                   wifi_ok ? "ready" : "failed",
@@ -913,6 +1226,12 @@ void setupWeb() {
                   GROUND_AP_PASSWORD,
                   WiFi.softAPIP().toString().c_str(),
                   dns_ok ? "on" : "off");
+    Serial.printf("Wi-Fi compatibility: b/g=%s HT20=%s WPA2=%s reset_reason=%d heap=%u\n",
+                  protocol_result == ESP_OK ? "ok" : esp_err_to_name(protocol_result),
+                  bandwidth_result == ESP_OK ? "ok" : esp_err_to_name(bandwidth_result),
+                  config_set_result == ESP_OK ? "ok" : esp_err_to_name(config_set_result),
+                  static_cast<int>(boot_reset_reason),
+                  ESP.getFreeHeap());
 }
 
 void setupLoRa() {
@@ -947,6 +1266,7 @@ void setupLoRa() {
 void setup() {
     Serial.begin(115200);
     delay(250);
+    boot_reset_reason = esp_reset_reason();
     Serial.println();
     Serial.println("PHOENIX LoRa ground control starting...");
     setupWeb();
@@ -968,6 +1288,7 @@ void loop() {
     if (dns_ok) dns.processNextRequest();
     server.handleClient();
     updateManualHold();
+    updateTiltHold();
     pollTelemetry();
     delay(2);
 }
