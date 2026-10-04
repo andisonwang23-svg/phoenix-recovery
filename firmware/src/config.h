@@ -208,7 +208,12 @@ constexpr double TARGET_LON = 0.0;  // Alias for TARGET_LONGITUDE
 // LoRa sync word and update rates
 // ---------------------------------------------------------------------------
 constexpr uint8_t LORA_SYNC_WORD = 0x12;
-constexpr uint32_t TELEMETRY_RATE_HZ = 5;
+// The v7 telemetry frame occupies about 205 ms at SF7/BW125/CR4/5. A 5 Hz
+// schedule therefore kept the half-duplex SX1262 transmitting almost
+// continuously and made ground commands intermittent. Two frames per second
+// preserve a >=250 ms receive window while local flight logging remains 10 Hz.
+constexpr uint32_t TELEMETRY_RATE_HZ = 2;
+constexpr uint32_t LORA_MIN_COMMAND_RX_WINDOW_MS = 250;
 constexpr uint32_t LOG_RATE_HZ = 10;
 constexpr uint32_t CONFIG_VERSION = 6;
 constexpr uint32_t MAIN_LOOP_INTERVAL_MS = 10; // 100 Hz main loop

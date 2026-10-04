@@ -37,6 +37,7 @@ constexpr uint32_t DASHBOARD_REFRESH_MS = 1000;
 constexpr uint32_t TELEMETRY_STALE_MS = 2500;
 constexpr uint32_t COMMAND_REPEAT_INTERVAL_MS = 250;
 constexpr uint32_t MANUAL_HOLD_MS = 1500;
+constexpr uint32_t BENCH_HOLD_MS = 2000;
 constexpr uint32_t TILT_TEST_HOLD_MS = 15000;
 constexpr float GROUND_MAX_MANUAL_BRAKE = cfg::LORA_REMOTE_MAX_BRAKE_COMMAND;
 
@@ -471,6 +472,16 @@ void printLinkStatus() {
                       telemetry.gps_valid ? "FIX" : (telemetry.gps_nmea_active ? "SEARCHING" : "NO_DATA"),
                       telemetry.imu_valid ? "OK" : "BAD",
                       telemetry.baro_valid ? "OK" : "BAD");
+        Serial.printf("Payload commands: seq=%u accepted=%u rejected=%u bench=%s armed=%s servo=%s reset=%u | Servo1=%.2f/%dus Servo2=%.2f/%dus\n",
+                      telemetry.remote_command_sequence,
+                      telemetry.remote_accepted_count,
+                      telemetry.remote_rejected_count,
+                      telemetry.bench_servo_active ? "ACTIVE" : "OFF",
+                      telemetry.payload_armed ? "YES" : "NO",
+                      telemetry.servo_healthy ? "READY" : "FAILED",
+                      telemetry.payload_reset_reason,
+                      telemetry.servo1_cmd, telemetry.servo1_us,
+                      telemetry.servo2_cmd, telemetry.servo2_us);
     } else {
         Serial.println();
     }
@@ -515,7 +526,7 @@ void handleLine(String line) {
         manual_hold.bench_mode = true;
         manual_hold.servo1 = servo_number == 1 ? amount : 0.0f;
         manual_hold.servo2 = servo_number == 2 ? amount : 0.0f;
-        manual_hold.until_ms = millis() + 1000;
+        manual_hold.until_ms = millis() + BENCH_HOLD_MS;
         manual_hold.last_repeat_ms = millis();
         sendCommand(comms::LoRaRemoteCommandType::BENCH_SERVO,
                     manual_hold.servo1, manual_hold.servo2);
@@ -868,7 +879,7 @@ void handleCommandApi() {
         manual_hold.bench_mode = true;
         manual_hold.servo1 = servo_number == 1 ? amount : 0.0f;
         manual_hold.servo2 = servo_number == 2 ? amount : 0.0f;
-        manual_hold.until_ms = millis() + 1000;
+        manual_hold.until_ms = millis() + BENCH_HOLD_MS;
         manual_hold.last_repeat_ms = millis();
         ok = sendCommand(comms::LoRaRemoteCommandType::BENCH_SERVO,
                          manual_hold.servo1, manual_hold.servo2);
@@ -1054,6 +1065,9 @@ let dropRecordingActive=false;
 let armWaitUntil=0;
 let refreshBusy=false;
 let refreshTimer=0;
+let pendingBench='';
+let pendingBenchUntil=0;
+let benchMessageUntil=0;
 async function api(path){
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),3000);
@@ -1078,7 +1092,18 @@ function sendServo(){if(dropLocked('manualStatus'))return;command('type=servo&se
 function zeroSliders(){el('s1').value=0;el('s2').value=0;updateSliders()}
 function neutral(){zeroSliders();command('type=neutral')}
 function ping(){command('type=ping','targetStatus')}
-function bench(n,a){if(dropLocked('benchStatus'))return;const p=Math.round(a*100);if(confirm('Confirm Servo '+n+' at '+p+'% with brake lines disconnected and no load?'))command('type=bench&servo='+n+'&amount='+a,'benchStatus')}
+function bench(n,a){
+  if(dropLocked('benchStatus'))return;
+  const key=n+':'+a,p=Math.round(a*100),now=Date.now(),box=el('benchStatus');
+  if(pendingBench!==key||now>pendingBenchUntil){
+    pendingBench=key;pendingBenchUntil=now+5000;benchMessageUntil=pendingBenchUntil;
+    box.textContent='Safety confirmation: tap Servo '+n+' · '+p+'% again within 5 seconds.';
+    return;
+  }
+  pendingBench='';pendingBenchUntil=0;benchMessageUntil=now+4000;
+  box.textContent='Button received · transmitting Servo '+n+' at '+p+'%…';
+  command('type=bench&servo='+n+'&amount='+a,'benchStatus');
+}
 function startTilt(){if(dropLocked('tiltStatus'))return;if(confirm('Hold the payload upright and clear the servo/linkage area. Start a 15-second, 15%-maximum roll-damping test?'))command('type=tiltstart','tiltStatus')}
 function stopTilt(){command('type=tiltstop','tiltStatus')}
 function armDrop(){if(confirm('Arm payload-owned drop-test recording? Servos will stay neutral.'))command('type=armdrop','dropStatus')}
@@ -1138,12 +1163,14 @@ async function refresh(){
     else el('tiltStatus').textContent=tiltReady?'Hold upright, then start the timed test.':'Requires live payload, preflight state, healthy IMU and barometer.';
     const benchReady=t.fresh&&t.servo_healthy&&!t.payload_armed&&!dropRecordingActive&&['BOOT','SELF_TEST','PRE_LAUNCH','PAD_SAFE','FAILSAFE_DESCENT'].includes(t.flight_state);
     document.querySelectorAll('.benchBtn').forEach(b=>b.disabled=!benchReady);
-    if(t.bench_servo_active)el('benchStatus').textContent='PAYLOAD CONFIRMED · command active · Servo 1 '+Math.round(t.servo1_cmd*100)+'% · Servo 2 '+Math.round(t.servo2_cmd*100)+'%';
-    else if(!t.fresh)el('benchStatus').textContent='Locked: payload telemetry is not live.';
-    else if(!t.servo_healthy)el('benchStatus').textContent='Locked: payload reports servo controller unavailable.';
-    else if(t.payload_armed||dropRecordingActive)el('benchStatus').textContent='Locked: payload/drop-test arm is active.';
-    else if(!benchReady)el('benchStatus').textContent='Locked in flight state '+t.flight_state+'.';
-    else el('benchStatus').textContent='Ready · payload accepted '+t.remote_accepted_count+' / rejected '+t.remote_rejected_count+' commands.';
+    if(t.bench_servo_active){benchMessageUntil=Date.now()+1500;el('benchStatus').textContent='PAYLOAD CONFIRMED · command active · Servo 1 '+Math.round(t.servo1_cmd*100)+'% · Servo 2 '+Math.round(t.servo2_cmd*100)+'%';}
+    else if(Date.now()>=benchMessageUntil){
+      if(!t.fresh)el('benchStatus').textContent='Locked: payload telemetry is not live.';
+      else if(!t.servo_healthy)el('benchStatus').textContent='Locked: payload reports servo controller unavailable.';
+      else if(t.payload_armed||dropRecordingActive)el('benchStatus').textContent='Locked: payload/drop-test arm is active.';
+      else if(!benchReady)el('benchStatus').textContent='Locked in flight state '+t.flight_state+'.';
+      else el('benchStatus').textContent='Ready · payload accepted '+t.remote_accepted_count+' / rejected '+t.remote_rejected_count+' commands.';
+    }
     const steer=(t.flight_state==='GUIDED_DESCENT'||t.flight_state==='FINAL_APPROACH')&&!dropRecordingActive;el('sendSteer').disabled=!steer;el('sendTarget').disabled=dropRecordingActive;el('steerGate').textContent=dropRecordingActive?'LOCKED · DROP RECORDING':(steer?'UNLOCKED FOR DESCENT':'LOCKED · '+t.flight_state);el('steerGate').className='tiny '+(steer?'ok':'warn');
     el('wifi').textContent=s.wifi_ok?s.ip:'OFF';el('clients').textContent=s.clients;el('radio').textContent=s.radio_ok?'RADIO READY':'RADIO ERROR';el('radio').className='tiny '+(s.radio_ok?'ok':'bad');
     el('signal').textContent=t.valid?(t.rssi+' dBm / '+num(t.snr)+' dB'):'--';el('counts').textContent=s.sent_count+' / '+s.failed_count;el('lastcmd').textContent=s.last_command;el('footerStatus').textContent=s.last_error?('ERROR · '+s.last_error):'LOCAL SYSTEM NOMINAL';
@@ -1159,6 +1186,17 @@ refresh();
 </body>
 </html>
 )HTML";
+}
+
+void sendDashboardPage() {
+    // Captive-network probes must receive content that differs from their
+    // normal Internet-success response. Serving the dashboard directly avoids
+    // depending on an OS following a redirect before it opens its portal UI.
+    server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    server.sendHeader("Pragma", "no-cache");
+    server.sendHeader("Expires", "-1");
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/html", htmlPage());
 }
 
 void setupWeb() {
@@ -1197,25 +1235,25 @@ void setupWeb() {
 
     dns_ok = dns.start(53, "*", ap_ip);
 
-    server.on("/", HTTP_GET, []() { server.send(200, "text/html", htmlPage()); });
+    server.on("/", HTTP_ANY, sendDashboardPage);
     server.on("/api/status", HTTP_GET, []() { sendJson(200, statusJson()); });
     server.on("/api/command", HTTP_GET, handleCommandApi);
 
+    // Common captive-network detection paths used by Apple, Android/ChromeOS,
+    // Windows, Ubuntu and Firefox. Wildcard DNS directs their probe hosts to
+    // this AP; a 200 response containing the dashboard marks the network as
+    // captive and gives the portal window useful content immediately.
     const char* portal_paths[] = {
         "/generate_204", "/gen_204", "/hotspot-detect.html",
         "/library/test/success.html", "/connecttest.txt", "/ncsi.txt",
-        "/canonical.html", "/success.txt"
+        "/canonical.html", "/success.txt", "/redirect", "/fwlink"
     };
     for (const char* path : portal_paths) {
-        server.on(path, HTTP_GET, []() {
-            server.sendHeader("Location", "http://192.168.8.1/", true);
-            server.send(302, "text/plain", "");
-        });
+        server.on(path, HTTP_ANY, sendDashboardPage);
     }
 
     server.onNotFound([]() {
-        server.sendHeader("Location", "http://192.168.8.1/", true);
-        server.send(302, "text/plain", "");
+        sendDashboardPage();
     });
     server.begin();
     wifi_setup_complete = true;

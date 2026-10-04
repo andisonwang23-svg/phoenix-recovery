@@ -20,6 +20,7 @@
 #include "logic/flight_coordinator.h"
 #include "logic/drop_test_controller.h"
 #include "logic/bench_servo_gate.h"
+#include "logic/lora_airtime.h"
 #include "logic/tilt_stabilizer.h"
 #include "comms/lora.h"
 #include "comms/wifi_manager.h"
@@ -28,6 +29,13 @@
 #include "safety/watchdog.h"
 #include "logging/flash_logger.h"
 #include "logging/ring_buffer.h"
+
+// At the configured SF7/BW125/CR4/5, the 124-byte v7 packet takes about
+// 205 ms on air. A higher rate would eliminate the command receive window.
+static_assert(sizeof(telemetry::TelemetryPacketV1) == 124,
+              "Recalculate the LoRa airtime budget after changing telemetry");
+static_assert(cfg::TELEMETRY_RATE_HZ <= 2,
+              "LoRa telemetry schedule leaves no reliable ground-command receive window");
 
 // ============================================================================
 // Global State
