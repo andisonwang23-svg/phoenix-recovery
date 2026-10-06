@@ -75,14 +75,21 @@ bool LoRaTelemetry::configureRadio() {
 bool LoRaTelemetry::send(const telemetry::TelemetryPacketV1& packet) {
     if (!initialized_) return false;
 
-    // Transmit temporarily takes the radio out of receive mode. Discard any
-    // stale IRQ indication, then immediately return to continuous reception.
+    // DIO1 is shared by RX_DONE and TX_DONE. Leaving the RX callback attached
+    // during blocking transmit makes our own TX_DONE look like a received
+    // command. Detach it for TX, then restore it before continuous reception.
+    // A packet that already completed reception gets priority over telemetry.
+    if ((radio_->getIrqFlags() & RADIOLIB_SX126X_IRQ_RX_DONE) != 0U) {
+        return false;
+    }
+    radio_->clearPacketReceivedAction();
     remote_packet_received = false;
     int16_t state = radio_->transmit(
         reinterpret_cast<const uint8_t*>(&packet),
         sizeof(telemetry::TelemetryPacketV1)
     );
 
+    radio_->setPacketReceivedAction(onRemotePacketReceived);
     if (state == RADIOLIB_ERR_NONE) {
         last_rssi_ = radio_->getRSSI();
         last_snr_ = radio_->getSNR();
@@ -96,7 +103,14 @@ bool LoRaTelemetry::send(const telemetry::TelemetryPacketV1& packet) {
 }
 
 bool LoRaTelemetry::pollRemoteCommand(LoRaRemoteCommand& command) {
-    if (!initialized_ || !radio_ || !remote_packet_received) return false;
+    if (!initialized_ || !radio_) return false;
+
+    // Poll RX_DONE as a fallback as well as using the ISR flag. This keeps the
+    // command path deterministic if an ESP32 interrupt edge is missed while
+    // the SX1262 is switching between transmit and receive modes.
+    const bool rx_done =
+        (radio_->getIrqFlags() & RADIOLIB_SX126X_IRQ_RX_DONE) != 0U;
+    if (!remote_packet_received && !rx_done) return false;
     remote_packet_received = false;
 
     LoRaRemoteCommandPacket packet;

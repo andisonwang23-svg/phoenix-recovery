@@ -35,7 +35,18 @@ constexpr uint8_t GROUND_AP_MAX_CLIENTS = 3;
 constexpr uint16_t GROUND_HTTP_PORT = 80;
 constexpr uint32_t DASHBOARD_REFRESH_MS = 1000;
 constexpr uint32_t TELEMETRY_STALE_MS = 2500;
-constexpr uint32_t COMMAND_REPEAT_INTERVAL_MS = 250;
+// The SX1262 is half duplex. Transmitting immediately after a payload frame is
+// the deterministic command slot: the payload has just completed TX and
+// returned to continuous RX. Waiting for that boundary avoids command/
+// telemetry collisions without weakening the radio settings.
+constexpr uint32_t COMMAND_SLOT_FRESH_MS = 50;
+constexpr uint32_t COMMAND_SLOT_WAIT_MS = 750;
+constexpr uint32_t COMMAND_RX_TURNAROUND_GUARD_MS = 40;
+// The payload sends telemetry every 500 ms. A 250 ms command cadence was an
+// exact harmonic of that schedule, so half-duplex TX/RX collisions could
+// repeat for the entire bench hold. Keep this below the payload's 600 ms bench
+// timeout while deliberately walking across the telemetry phase.
+constexpr uint32_t COMMAND_REPEAT_INTERVAL_MS = 350;
 constexpr uint32_t MANUAL_HOLD_MS = 1500;
 constexpr uint32_t BENCH_HOLD_MS = 2000;
 constexpr uint32_t TILT_TEST_HOLD_MS = 15000;
@@ -200,6 +211,44 @@ struct TiltHold {
 
 static TiltHold tilt_hold;
 
+void pollTelemetry();
+
+bool telemetryIrqPending() {
+    return lora_packet_received ||
+           ((radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_RX_DONE) != 0U);
+}
+
+bool awaitPayloadReceiveSlot() {
+    const uint32_t now = millis();
+    if (telemetry.valid && telemetry.rx_ms != 0 &&
+        now - telemetry.rx_ms <= COMMAND_SLOT_FRESH_MS) {
+        const uint32_t age_ms = now - telemetry.rx_ms;
+        if (age_ms < COMMAND_RX_TURNAROUND_GUARD_MS) {
+            delay(COMMAND_RX_TURNAROUND_GUARD_MS - age_ms);
+        }
+        return true;
+    }
+
+    const uint32_t start_ms = now;
+    const uint32_t starting_count = telemetry_received_count;
+    while (millis() - start_ms < COMMAND_SLOT_WAIT_MS) {
+        if (telemetryIrqPending()) {
+            pollTelemetry();
+            if (telemetry_received_count != starting_count) {
+                // TX_DONE reaches both boards at nearly the same instant. Give
+                // the payload time to execute startReceive() before emitting
+                // the command preamble, otherwise the first symbols can be
+                // missed even though the channel is now nominally idle.
+                delay(COMMAND_RX_TURNAROUND_GUARD_MS);
+                return true;
+            }
+        }
+        if (dns_ok) dns.processNextRequest();
+        delay(1);
+    }
+    return false;
+}
+
 uint16_t crc16CcittLocal(const uint8_t* data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; ++i) {
@@ -252,6 +301,13 @@ bool sendCommand(comms::LoRaRemoteCommandType type,
         return false;
     }
 
+    if (!awaitPayloadReceiveSlot()) {
+        last_error = "No fresh payload receive slot";
+        failed_count++;
+        if (!quiet) Serial.println(last_error);
+        return false;
+    }
+
     comms::LoRaRemoteCommandPacket packet;
     packet.type = static_cast<uint8_t>(type);
     packet.sequence = ++sequence_number;
@@ -261,11 +317,15 @@ bool sendCommand(comms::LoRaRemoteCommandType type,
     packet.target_lon_e7 = static_cast<int32_t>(llround(target_lon * 10000000.0));
     comms::finalizeLoRaRemotePacket(packet);
 
+    // DIO1 also signals TX_DONE. Detach the receive callback during blocking
+    // transmit so our own command is not counted as an invalid telemetry frame.
+    radio.clearPacketReceivedAction();
     lora_packet_received = false;
     const int16_t state = radio.transmit(
         reinterpret_cast<const uint8_t*>(&packet),
         sizeof(packet)
     );
+    radio.setPacketReceivedAction(onLoRaPacketReceived);
     radio.startReceive();
 
     if (state == RADIOLIB_ERR_NONE) {
@@ -296,7 +356,7 @@ bool sendCommand(comms::LoRaRemoteCommandType type,
 }
 
 void pollTelemetry() {
-    if (!radio_ok || !lora_packet_received) return;
+    if (!radio_ok || !telemetryIrqPending()) return;
     lora_packet_received = false;
     const uint32_t now = millis();
 
@@ -406,8 +466,13 @@ void updateManualHold() {
 }
 
 void stopTiltHold(bool transmit_stop) {
+    const bool was_active = tilt_hold.active;
     tilt_hold.active = false;
-    if (transmit_stop) {
+    // Do not occupy the next payload receive slot with a redundant STOP packet.
+    // Bench/manual/drop commands already disarm tilt mode on the payload. The
+    // old unconditional STOP frequently arrived while the immediately
+    // following servo packet was lost, making a healthy servo appear broken.
+    if (transmit_stop && was_active) {
         sendCommand(comms::LoRaRemoteCommandType::STOP_TILT_STABILIZER,
                     0.0f, 0.0f, 0.0, 0.0, true);
     }
@@ -1313,6 +1378,12 @@ void setup() {
 }
 
 void loop() {
+    // Consume a completed payload frame before servicing a dashboard/serial
+    // command. sendCommand() must switch this half-duplex radio to TX; doing
+    // that first clears RX_DONE and discards the telemetry frame that tells us
+    // whether the previous command was accepted and what pulse was applied.
+    pollTelemetry();
+
     while (Serial.available()) {
         const char ch = static_cast<char>(Serial.read());
         if (ch == '\n' || ch == '\r') {
@@ -1327,6 +1398,5 @@ void loop() {
     server.handleClient();
     updateManualHold();
     updateTiltHold();
-    pollTelemetry();
     delay(2);
 }

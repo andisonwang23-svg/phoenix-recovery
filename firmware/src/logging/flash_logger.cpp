@@ -39,6 +39,9 @@ bool FlashLogger::begin(const FlashLoggerConfig& config) {
 bool FlashLogger::startFlightLog() {
     if (!initialized_ || !config_.enabled) return false;
 
+    logging_active_ = false;
+    write_fault_reported_ = false;
+
     // Create new flight log file
     String filename = "/flight_" + String(current_flight_.flight_number) + ".log";
     File file = SPIFFS.open(filename.c_str(), FILE_WRITE);
@@ -58,8 +61,16 @@ bool FlashLogger::startFlightLog() {
 
     // Write header
     file.seek(0);
-    file.write(reinterpret_cast<const uint8_t*>(&current_flight_), sizeof(FlightLogHeader));
+    const size_t header_written =
+        file.write(reinterpret_cast<const uint8_t*>(&current_flight_), sizeof(FlightLogHeader));
     file.close();
+
+    if (header_written != sizeof(FlightLogHeader)) {
+        SPIFFS.remove(filename.c_str());
+        Serial.println("[FlashLogger] Flight log storage is full or unwritable; logging disabled");
+        write_fault_reported_ = true;
+        return false;
+    }
 
     logging_active_ = true;
     entry_count_ = 0;
@@ -87,6 +98,7 @@ bool FlashLogger::endFlightLog() {
     File file = SPIFFS.open(filename.c_str(), "r+");
     if (!file) {
         Serial.println("[FlashLogger] Failed to update flight log header");
+        logging_active_ = false;
         return false;
     }
 
@@ -106,6 +118,16 @@ bool FlashLogger::log(LogEntryType type, const uint8_t* data, uint16_t length) {
     if (!initialized_ || !logging_active_) return false;
     if (length > sizeof(LogEntry::data)) return false;
 
+    if (entry_count_ >= config_.max_entries ||
+        data_size_ + sizeof(LogEntryHeader) + length > config_.max_data_size) {
+        logging_active_ = false;
+        if (!write_fault_reported_) {
+            Serial.println("[FlashLogger] Configured log limit reached; logging stopped");
+            write_fault_reported_ = true;
+        }
+        return false;
+    }
+
     LogEntry entry;
     entry.header.timestamp_ms = millis();
     entry.header.type = static_cast<uint8_t>(type);
@@ -115,6 +137,14 @@ bool FlashLogger::log(LogEntryType type, const uint8_t* data, uint16_t length) {
     memcpy(entry.data, data, length);
 
     if (!writeEntry(entry)) {
+        // A full or damaged filesystem must fail once, not retry at the 10 Hz
+        // flight-log rate. Repeated failed opens previously flooded Serial and
+        // stole time from the half-duplex LoRa receive window.
+        logging_active_ = false;
+        if (!write_fault_reported_) {
+            Serial.println("[FlashLogger] Log write failed; logging disabled until reboot");
+            write_fault_reported_ = true;
+        }
         return false;
     }
 

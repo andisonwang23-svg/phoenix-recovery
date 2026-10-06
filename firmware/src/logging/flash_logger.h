@@ -111,6 +111,7 @@ private:
     FlashLoggerConfig config_;
     bool initialized_ = false;
     bool logging_active_ = false;
+    bool write_fault_reported_ = false;
 
     uint32_t entry_count_ = 0;
     uint32_t data_size_ = 0;
