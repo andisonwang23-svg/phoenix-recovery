@@ -40,7 +40,9 @@ constexpr uint32_t TELEMETRY_STALE_MS = 2500;
 // returned to continuous RX. Waiting for that boundary avoids command/
 // telemetry collisions without weakening the radio settings.
 constexpr uint32_t COMMAND_SLOT_FRESH_MS = 50;
-constexpr uint32_t COMMAND_SLOT_WAIT_MS = 750;
+// Idle payload telemetry can be 1 Hz, so wait beyond one complete interval
+// for the deterministic ground-to-payload command slot.
+constexpr uint32_t COMMAND_SLOT_WAIT_MS = 1500;
 constexpr uint32_t COMMAND_RX_TURNAROUND_GUARD_MS = 40;
 // The payload sends telemetry every 500 ms. A 250 ms command cadence was an
 // exact harmonic of that schedule, so half-duplex TX/RX collisions could
