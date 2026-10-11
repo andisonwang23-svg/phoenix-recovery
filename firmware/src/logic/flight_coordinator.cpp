@@ -27,6 +27,10 @@ void FlightCoordinator::reset(uint32_t now_ms) {
     preflight_launch_blocked_ = false;
 }
 
+void FlightCoordinator::forceFailsafe(FailCode failure, uint32_t now_ms) {
+    latchFailure(failure, now_ms);
+}
+
 bool FlightCoordinator::validTarget(double latitude, double longitude) {
     if (!std::isfinite(latitude) || !std::isfinite(longitude)) return false;
     if (latitude < -90.0 || latitude > 90.0 || longitude < -180.0 || longitude > 180.0) return false;

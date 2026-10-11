@@ -35,6 +35,10 @@ struct GuidanceConfig {
     float min_course_speed_mps = 3.0f;
     float unstable_gyro_rate_dps = 25.0f;
     float reduced_authority = 0.35f;
+    float low_speed_max_command = 0.10f;
+    float missing_imu_max_command = 0.10f;
+    float missing_baro_max_command = 0.10f;
+    float unreachable_max_command = 0.35f;
     float final_deadband_multiplier = 2.0f;
     float low_speed_deadband_multiplier = 3.0f;
     float nominal_glide_ratio = 3.0f; // REQUIRES EXPERIMENTAL CALIBRATION

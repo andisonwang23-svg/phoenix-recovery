@@ -11,6 +11,8 @@ static DropTestConfig config() {
     c.release_speed_mps = -1.0f;
     c.release_altitude_loss_m = 1.0f;
     c.release_confirm_ms = 200;
+    c.release_imu_accel_mps2 = 2.0f;
+    c.release_candidate_timeout_ms = 300;
     c.canopy_observation_delay_ms = 100;
     c.canopy_deceleration_delta_mps = 1.0f;
     c.canopy_accel_signature_mps2 = 3.0f;
@@ -44,7 +46,9 @@ static DropTestInput sample(uint32_t now, float altitude, float vs) {
 
 static void confirmDrop(DropTestController& controller) {
     controller.arm(100, 10.0f);
-    controller.step(sample(200, 8.5f, -2.0f));
+    auto release = sample(200, 10.0f, 0.0f);
+    release.vertical_accel_mps2 = 3.0f;
+    controller.step(release);
     auto out = controller.step(sample(400, 8.0f, -2.0f));
     TEST_ASSERT_EQUAL((int)DropTestState::DROP_CONFIRMED, (int)out.state);
     TEST_ASSERT_TRUE((out.events & DROP_EVENT_RELEASE_CONFIRMED) != 0);
@@ -61,13 +65,19 @@ void arm_always_enables_recording_and_neutral_lock() {
 void release_requires_persistent_speed_and_altitude_loss() {
     DropTestController controller(config());
     controller.arm(100, 10.0f);
-    auto out = controller.step(sample(200, 8.5f, -2.0f));
+    auto release = sample(200, 10.0f, 0.0f);
+    release.vertical_accel_mps2 = 3.0f;
+    auto out = controller.step(release);
     TEST_ASSERT_EQUAL((int)DropTestState::RELEASE_CANDIDATE, (int)out.state);
     out = controller.step(sample(250, 8.5f, 0.0f));
+    TEST_ASSERT_EQUAL((int)DropTestState::RELEASE_CANDIDATE, (int)out.state);
+    out = controller.step(sample(501, 8.5f, 0.0f));
     TEST_ASSERT_EQUAL((int)DropTestState::ARMED_RECORDING, (int)out.state);
     TEST_ASSERT_TRUE((out.events & DROP_EVENT_RELEASE_REJECTED) != 0);
-    controller.step(sample(300, 8.5f, -2.0f));
-    out = controller.step(sample(501, 8.0f, -2.0f));
+    release = sample(600, 10.0f, 0.0f);
+    release.vertical_accel_mps2 = 3.0f;
+    controller.step(release);
+    out = controller.step(sample(801, 8.0f, -2.0f));
     TEST_ASSERT_EQUAL((int)DropTestState::DROP_CONFIRMED, (int)out.state);
 }
 
@@ -75,6 +85,7 @@ void impossible_values_cannot_trigger_release() {
     DropTestController controller(config());
     controller.arm(100, 10.0f);
     auto in = sample(200, 8.0f, -2.0f);
+    in.vertical_accel_mps2 = std::numeric_limits<float>::quiet_NaN();
     in.vertical_speed_mps = std::numeric_limits<float>::quiet_NaN();
     auto out = controller.step(in);
     TEST_ASSERT_EQUAL((int)DropTestState::ARMED_RECORDING, (int)out.state);

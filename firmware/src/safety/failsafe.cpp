@@ -151,85 +151,19 @@ void FailsafeController::forceClear() {
 
 void FailsafeController::applyAction(VehicleState& state) {
     if (!state_.active) return;
-
-    switch (state_.action) {
-        case FailsafeAction::NEUTRAL_SERVOS:
-            state.left_servo_command = 0.0f;
-            state.right_servo_command = 0.0f;
-            state.guidance_mode = logic::GuidanceMode::MANUAL;
-            break;
-
-        case FailsafeAction::FLARE_AND_LAND:
-            state.left_servo_command = -1.0f;  // Full brake
-            state.right_servo_command = -1.0f; // Full brake
-            state.guidance_mode = logic::GuidanceMode::MANUAL;
-            break;
-
-        case FailsafeAction::SPIRAL_DESCENT:
-            state.left_servo_command = 0.5f;   // Gentle turn
-            state.right_servo_command = -0.5f;
-            state.guidance_mode = logic::GuidanceMode::MANUAL;
-            break;
-
-        case FailsafeAction::EMERGENCY_CUTOFF:
-            // Hardware-specific - would cut power to servos
-            state.left_servo_command = 0.0f;
-            state.right_servo_command = 0.0f;
-            break;
-
-        case FailsafeAction::REBOOT_SYSTEM:
-            // Trigger reboot
-            ESP.restart();
-            break;
-
-        case FailsafeAction::HOLD_LAST_COMMAND:
-            // Keep last commanded values
-            break;
-
-        default:
-            break;
-    }
+    // Consolidated policy: every failsafe is fail-neutral. The flight
+    // coordinator and the legacy controller now agree, so a later call cannot
+    // reintroduce full brake, a spiral, a held command, or an automatic reboot.
+    state.left_servo_command = 0.0f;
+    state.right_servo_command = 0.0f;
+    state.requested_left_servo_command = 0.0f;
+    state.requested_right_servo_command = 0.0f;
+    state.guidance_mode = logic::GuidanceMode::MODE_FAILSAFE;
 }
 
 FailsafeAction FailsafeController::determineAction(FailsafeReason reason) const {
-    switch (reason) {
-        case FailsafeReason::IMU_FAILURE:
-        case FailsafeReason::BAROMETER_FAILURE:
-        case FailsafeReason::GPS_FAILURE:
-            return FailsafeAction::NEUTRAL_SERVOS;
-
-        case FailsafeReason::SERVO_FAILURE:
-            return FailsafeAction::EMERGENCY_CUTOFF;
-
-        case FailsafeReason::LOW_MEMORY:
-        case FailsafeReason::HIGH_CPU_LOAD:
-            return FailsafeAction::REBOOT_SYSTEM;
-
-        case FailsafeReason::WATCHDOG_TIMEOUT:
-            return FailsafeAction::REBOOT_SYSTEM;
-
-        case FailsafeReason::MANUAL_TRIGGER:
-            return FailsafeAction::NEUTRAL_SERVOS;
-
-        case FailsafeReason::LAUNCH_DETECTION_TIMEOUT:
-        case FailsafeReason::APOGEE_DETECTION_TIMEOUT:
-            return FailsafeAction::FLARE_AND_LAND;
-
-        case FailsafeReason::STABILIZATION_TIMEOUT:
-            return FailsafeAction::SPIRAL_DESCENT;
-
-        case FailsafeReason::GUIDANCE_LOST_TARGET:
-            return FailsafeAction::SPIRAL_DESCENT;
-
-        case FailsafeReason::FLIGHT_TIME_EXCEEDED:
-            return FailsafeAction::FLARE_AND_LAND;
-
-        case FailsafeReason::POWER_LOW:
-            return FailsafeAction::FLARE_AND_LAND;
-
-        default:
-            return FailsafeAction::NEUTRAL_SERVOS;
-    }
+    (void)reason;
+    return FailsafeAction::NEUTRAL_SERVOS;
 }
 
 bool FailsafeController::canAutoRecover(const HealthReport& health) const {

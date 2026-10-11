@@ -94,6 +94,10 @@ private:
     String generateConfigHTML();
     String generateBenchHTML();
     String generateSetupHTML();
+    String generateRecoveryHTML();
+    String getLogIndexJSON();
+    void handleLogDownload(AsyncWebServerRequest* request);
+    static bool validLogName(const String& name);
     String getReadinessJSON();
     String getStatusJSON();
     String getSensorsJSON();

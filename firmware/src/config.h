@@ -208,14 +208,13 @@ constexpr double TARGET_LON = 0.0;  // Alias for TARGET_LONGITUDE
 // LoRa sync word and update rates
 // ---------------------------------------------------------------------------
 constexpr uint8_t LORA_SYNC_WORD = 0x12;
-// The v7 telemetry frame occupies about 205 ms at SF7/BW125/CR4/5. A 5 Hz
-// schedule therefore kept the half-duplex SX1262 transmitting almost
-// continuously and made ground commands intermittent. Two frames per second
-// preserve a >=250 ms receive window while local flight logging remains 10 Hz.
+// The 140-byte v8 telemetry frame occupies about 231 ms at SF7/BW125/CR4/5.
+// Two frames per second preserve about 269 ms for the half-duplex command
+// receive window while local flight logging remains independent at 10 Hz.
 constexpr uint32_t TELEMETRY_RATE_HZ = 2;
 constexpr uint32_t LORA_MIN_COMMAND_RX_WINDOW_MS = 250;
 constexpr uint32_t LOG_RATE_HZ = 10;
-constexpr uint32_t CONFIG_VERSION = 6;
+constexpr uint32_t CONFIG_VERSION = 8;
 constexpr uint32_t MAIN_LOOP_INTERVAL_MS = 10; // 100 Hz main loop
 
 // ---------------------------------------------------------------------------
@@ -233,6 +232,8 @@ static_assert(DROP_TEST_NEUTRAL_LOCK_ENABLED,
 constexpr float    DROP_TEST_RELEASE_SPEED_MPS = -1.0f;
 constexpr float    DROP_TEST_RELEASE_ALT_LOSS_M = 1.5f;
 constexpr uint32_t DROP_TEST_RELEASE_CONFIRM_MS = 400;
+constexpr float    DROP_TEST_RELEASE_IMU_ACCEL_MPS2 = 2.0f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr uint32_t DROP_TEST_RELEASE_CANDIDATE_TIMEOUT_MS = 3000;
 // Observational signatures only: a sensor signature does not prove that the
 // canopy is fully open. All thresholds REQUIRES EXPERIMENTAL CALIBRATION.
 constexpr uint32_t DROP_TEST_CANOPY_OBSERVATION_DELAY_MS = 150;
@@ -252,6 +253,53 @@ constexpr uint32_t DROP_TEST_MAX_DURATION_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t DROP_TEST_TELEMETRY_RATE_HZ = 2; // preview only; raw data is logged locally
 constexpr uint32_t DROP_TEST_IDLE_TELEMETRY_RATE_HZ = 1;
 constexpr float    DROP_TEST_MIN_BATTERY_V = 0.0f; // 0 disables until voltage hardware exists
+
+// ---------------------------------------------------------------------------
+// Guarded return-to-target inert drop profile
+// ---------------------------------------------------------------------------
+// The software and replay tests are present, but physical steering remains
+// locked until the brake travel, canopy response, sink rate, glide ratio, and
+// turn response have been measured on the inert recovery module.
+constexpr bool     GUIDED_DROP_TEST_ENABLED = false;
+constexpr bool     GUIDED_DROP_CALIBRATION_CONFIRMED = false;
+constexpr bool     GUIDED_DROP_20_PERCENT_UNLOCKED = false;
+constexpr bool     GUIDED_DROP_40_PERCENT_UNLOCKED = false;
+constexpr bool     GUIDED_DROP_VALIDATED_FULL_UNLOCKED = false;
+static_assert(!GUIDED_DROP_TEST_ENABLED || GUIDED_DROP_CALIBRATION_CONFIRMED,
+              "Guided drop testing requires measured physical calibration");
+static_assert(!GUIDED_DROP_40_PERCENT_UNLOCKED || GUIDED_DROP_20_PERCENT_UNLOCKED,
+              "40 percent authority requires the 20 percent phase first");
+static_assert(!GUIDED_DROP_VALIDATED_FULL_UNLOCKED || GUIDED_DROP_40_PERCENT_UNLOCKED,
+              "Validated full authority requires the 40 percent phase first");
+// No arm-switch GPIO has been selected in the verified pin map. Guided mode
+// therefore remains compile-time locked. Assign and verify a dedicated pin
+// before setting GUIDED_DROP_TEST_ENABLED true; do not reuse a strapping pin.
+constexpr int      PIN_GUIDED_DROP_ARM_SWITCH = -1;
+constexpr bool     GUIDED_DROP_ARM_ACTIVE_LOW = true;
+static_assert(!GUIDED_DROP_TEST_ENABLED || PIN_GUIDED_DROP_ARM_SWITCH >= 0,
+              "Guided drop testing requires a verified physical arm switch pin");
+constexpr uint32_t GUIDED_DROP_CONFIRM_WINDOW_MS = 5000;
+constexpr uint32_t GUIDED_DROP_DEPLOYMENT_NEUTRAL_MS = 1500; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr uint32_t GUIDED_DROP_NAV_CONFIRM_MS = 2000;
+constexpr uint32_t GUIDED_DROP_NAV_LOSS_LATCH_MS = 2000;
+constexpr float    GUIDED_DROP_MIN_ACTIVATION_ALTITUDE_M = 75.0f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr float    GUIDED_DROP_MAX_ACTIVATION_GYRO_DPS = 12.0f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr float    GUIDED_DROP_MAX_STEERING = 0.40f; // staged test ceiling; REQUIRES EXPERIMENTAL CALIBRATION
+constexpr float    GUIDED_DROP_FINAL_MAX_STEERING = 0.08f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr bool     GUIDED_DROP_IMU_COURSE_HOLD_ENABLED = false;
+constexpr uint32_t GUIDED_DROP_IMU_COURSE_HOLD_MAX_MS = 1500; // REQUIRES REPLAY/HITL VALIDATION
+constexpr float    GUIDED_DROP_IMU_COURSE_HOLD_MAX_COMMAND = 0.05f; // REQUIRES REPLAY/HITL VALIDATION
+constexpr uint32_t GUIDED_DROP_INSTABILITY_LATCH_MS = 2000; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr float    GUIDED_DROP_NEUTRAL_GYRO_DPS = 25.0f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr uint8_t  GUIDED_DROP_OSCILLATION_SIGN_CHANGES = 4; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr uint32_t GUIDED_DROP_OSCILLATION_WINDOW_MS = 4000; // REQUIRES EXPERIMENTAL CALIBRATION
+
+// Automatic unloaded extension/return-to-neutral service test. This uses the
+// proven bench-servo path and does not require IMU, barometer, or GPS health.
+constexpr bool     SERVO_RETRACT_TEST_ENABLED = true;
+constexpr float    SERVO_RETRACT_TEST_COMMAND = 0.20f;
+constexpr uint32_t SERVO_RETRACT_TEST_HOLD_MS = 700;
+constexpr uint32_t SERVO_RETRACT_TEST_SETTLE_MS = 900;
 
 // ---------------------------------------------------------------------------
 // LoRa remote-control supervision
@@ -308,6 +356,7 @@ constexpr int SERVO_RIGHT_CHANNEL = PIN_SERVO_RIGHT;
 // Payload Wi-Fi is disabled in flight hardware. Configuration and monitoring
 // are provided by the separate PHOENIX-GROUND LoRa dashboard.
 constexpr bool PAYLOAD_WIFI_ENABLED = false;
+constexpr bool PAYLOAD_POST_LANDING_WIFI_ENABLED = true;
 constexpr const char* WIFI_AP_SSID = "PHOENIX-RECOVERY";
 constexpr const char* WIFI_AP_PASS = "parafoil";
 constexpr uint8_t WIFI_AP_CHANNEL = 1;

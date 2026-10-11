@@ -21,7 +21,7 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
 void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& packet, uint8_t sequence) {
     packet.magic[0] = 0x50;
     packet.magic[1] = 0x52;
-    packet.version = 7;
+    packet.version = 8;
     packet.sequence = sequence;
 
     packet.timestamp_ms = state.timestamp_ms;
@@ -40,6 +40,33 @@ void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& pack
     packet.satellites = static_cast<uint8_t>(state.satellite_count);
     packet.satellites_in_view = static_cast<uint8_t>(state.satellites_in_view);
     packet.gps_valid = state.gps_valid ? 1 : 0;
+    packet.service_test_status =
+        (static_cast<uint8_t>(state.servo_retract_test_status) & 0x0FU) |
+        ((static_cast<uint8_t>(state.guided_drop_status) & 0x0FU) << 4U);
+    packet.configuration_version = static_cast<uint16_t>(state.configuration_version);
+    packet.gps_age_100ms = static_cast<uint16_t>(
+        state.gps_age_ms / 100U > 65535U ? 65535U : state.gps_age_ms / 100U);
+    packet.baro_age_100ms = static_cast<uint16_t>(
+        state.baro_age_ms / 100U > 65535U ? 65535U : state.baro_age_ms / 100U);
+    packet.imu_age_100ms = static_cast<uint16_t>(
+        state.imu_age_ms / 100U > 65535U ? 65535U : state.imu_age_ms / 100U);
+    packet.battery_mv = state.battery_voltage_valid
+        ? static_cast<uint16_t>(state.battery_voltage_v * 1000.0f) : 0;
+    packet.servo_rail_mv = state.servo_rail_voltage_valid
+        ? static_cast<uint16_t>(state.servo_rail_voltage_v * 1000.0f) : 0;
+    packet.power_valid_flags = (state.battery_voltage_valid ? 1U : 0U) |
+                               (state.servo_rail_voltage_valid ? 2U : 0U);
+    packet.guided_authority_percent =
+        logic::guidedAuthorityPercent(state.guided_authority);
+    packet.guided_flags = (state.guided_canopy_confirmed ? 1U : 0U) |
+                          (state.guided_confirmation_pending ? 2U : 0U) |
+                          (state.guided_physical_arm_active ? 4U : 0U) |
+                          (state.guided_abort_latched ? 8U : 0U) |
+                          (state.guided_gps_suspect ? 16U : 0U) |
+                          (state.guided_course_hold_active ? 32U : 0U) |
+                          (state.guided_oscillation_damping ? 64U : 0U) |
+                          (state.guided_drop_active ? 128U : 0U);
+    packet.guided_profile_unlock_flags = state.guided_profile_unlock_flags;
 
     // Altitude / vertical
     packet.altitude_agl_m = static_cast<int16_t>(state.altitude_agl_m * 10);
@@ -103,7 +130,8 @@ void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& pack
                                  (state.lora_remote_manual_active ? 8U : 0U) |
                                  (state.lora_bench_servo_active ? 16U : 0U) |
                                  (state.armed ? 32U : 0U) |
-                                 (state.servo_healthy ? 64U : 0U);
+                                 (state.servo_healthy ? 64U : 0U) |
+                                 (state.servo_retract_test_active ? 128U : 0U);
     packet.reset_reason = state.reset_reason;
 
     // CRC (compute over everything except CRC field)

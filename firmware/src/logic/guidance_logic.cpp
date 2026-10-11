@@ -64,11 +64,11 @@ GuidanceOutput computeGuidance(const GuidanceInput& in, const GuidanceConfig& cf
         max_cmd = cfg.flare_max_brake;
     }
 
-    if (!out.course_reliable) { max_cmd = std::min(max_cmd, cfg.reduced_authority); deadband *= cfg.low_speed_deadband_multiplier; }
+    if (!out.course_reliable) { max_cmd = std::min(max_cmd, cfg.low_speed_max_command); deadband *= cfg.low_speed_deadband_multiplier; }
     if (in.imu_valid && in.angular_rate_dps > cfg.unstable_gyro_rate_dps) max_cmd = 0.0f;
-    else if (!in.imu_valid) max_cmd = std::min(max_cmd, cfg.reduced_authority);
-    if (!in.baro_valid) max_cmd = std::min(max_cmd, cfg.reduced_authority);
-    if (!out.target_reachable) max_cmd = std::min(max_cmd, cfg.reduced_authority);
+    else if (!in.imu_valid) max_cmd = std::min(max_cmd, cfg.missing_imu_max_command);
+    if (!in.baro_valid) max_cmd = std::min(max_cmd, cfg.missing_baro_max_command);
+    if (!out.target_reachable) max_cmd = std::min(max_cmd, cfg.unreachable_max_command);
 
     // Proportional steering
     float raw_command = std::fabs(out.heading_error_deg) < deadband

@@ -22,6 +22,9 @@
 #include "logic/bench_servo_gate.h"
 #include "logic/lora_airtime.h"
 #include "logic/tilt_stabilizer.h"
+#include "logic/servo_retract_test.h"
+#include "logic/guided_drop_controller.h"
+#include "logic/guided_drop_arm_gate.h"
 #include "comms/lora.h"
 #include "comms/wifi_manager.h"
 #include "telemetry/telemetry_packet.h"
@@ -30,9 +33,9 @@
 #include "logging/flash_logger.h"
 #include "logging/ring_buffer.h"
 
-// At the configured SF7/BW125/CR4/5, the 124-byte v7 packet takes about
-// 205 ms on air. A higher rate would eliminate the command receive window.
-static_assert(sizeof(telemetry::TelemetryPacketV1) == 124,
+// Wire format v8 adds synchronized configuration, age, power-validity, and
+// guided-profile evidence. Keep this exact assertion tied to the airtime test.
+static_assert(sizeof(telemetry::TelemetryPacketV1) == 140,
               "Recalculate the LoRa airtime budget after changing telemetry");
 static_assert(cfg::TELEMETRY_RATE_HZ <= 2,
               "LoRa telemetry schedule leaves no reliable ground-command receive window");
@@ -47,6 +50,9 @@ static control::ServoController servos;
 static logic::FlightCoordinator coordinator;
 static logic::DropTestController drop_test_controller;
 static logic::TiltStabilizer tilt_stabilizer;
+static logic::ServoRetractTest servo_retract_test;
+static logic::GuidedDropController guided_drop_controller;
+static logic::GuidedDropArmGate guided_drop_arm_gate(cfg::GUIDED_DROP_CONFIRM_WINDOW_MS);
 static comms::LoRaTelemetry lora;
 static comms::WiFiManager wifi;
 static phoenix::safety::HealthMonitor health;
@@ -60,6 +66,8 @@ static uint32_t last_telemetry_ms = 0;
 static uint32_t last_health_ms = 0;
 static uint32_t last_log_ms = 0;
 static uint32_t last_status_ms = 0;
+static uint32_t last_post_landing_wifi_attempt_ms = 0;
+static bool boot_reset_fail_neutral = false;
 
 // ============================================================================
 // Forward Declarations
@@ -74,13 +82,17 @@ void logFlightData();
 void printStatus();
 void updateLoRaRemoteControl();
 void updateDropTestRecording();
-bool armDropTest(uint32_t now);
+bool armDropTest(uint32_t now, bool guided_return = false);
 void abortDropTest(uint32_t now, const char* reason);
 uint32_t telemetryIntervalMs();
 bool saveRemoteTarget(double latitude, double longitude);
 void loadPersistedTarget();
 bool remoteControlAllowedForState(logic::FlightState state);
 bool benchServoActuationAllowed(uint32_t now);
+bool guidedPhysicalArmActive();
+logic::GuidedDropUnlocks guidedDropUnlocks();
+logic::GuidedArmPrerequisites guidedArmPrerequisites();
+float guidedAuthorityLimit(logic::GuidedAuthorityLevel level);
 
 static uint32_t last_lora_remote_poll_ms = 0;
 static bool lora_remote_runtime_enabled = cfg::LORA_REMOTE_CONTROL_ENABLED;
@@ -93,7 +105,57 @@ static uint32_t lora_bench_servo_expires_ms = 0;
 static bool lora_tilt_stabilizer_requested = false;
 static uint32_t lora_tilt_stabilizer_expires_ms = 0;
 static bool lora_tilt_stabilizer_restart_locked = false;
+static bool guided_drop_requested = false;
+static bool guided_abort_latched = false;
+static logic::GuidedAuthorityLevel guided_authority =
+    logic::GuidedAuthorityLevel::NEUTRAL;
 static uint16_t next_drop_test_id = 1;
+
+static logic::ServoRetractTestConfig servoRetractTestConfig() {
+    logic::ServoRetractTestConfig c;
+    c.extension_command = cfg::SERVO_RETRACT_TEST_COMMAND;
+    c.extension_hold_ms = cfg::SERVO_RETRACT_TEST_HOLD_MS;
+    c.retraction_settle_ms = cfg::SERVO_RETRACT_TEST_SETTLE_MS;
+    return c;
+}
+
+static logic::GuidedDropConfig guidedDropConfig() {
+    logic::GuidedDropConfig c;
+    c.enabled = cfg::GUIDED_DROP_TEST_ENABLED &&
+                cfg::GUIDED_DROP_CALIBRATION_CONFIRMED;
+    c.deployment_neutral_ms = cfg::GUIDED_DROP_DEPLOYMENT_NEUTRAL_MS;
+    c.navigation_confirm_ms = cfg::GUIDED_DROP_NAV_CONFIRM_MS;
+    c.navigation_loss_latch_ms = cfg::GUIDED_DROP_NAV_LOSS_LATCH_MS;
+    c.sensor_max_age_ms = cfg::SENSOR_TIMEOUT_MS;
+    c.min_activation_altitude_m = cfg::GUIDED_DROP_MIN_ACTIVATION_ALTITUDE_M;
+    c.max_activation_angular_rate_dps = cfg::GUIDED_DROP_MAX_ACTIVATION_GYRO_DPS;
+    c.reduced_authority_angular_rate_dps = cfg::GUIDED_DROP_MAX_ACTIVATION_GYRO_DPS;
+    c.neutral_angular_rate_dps = cfg::GUIDED_DROP_NEUTRAL_GYRO_DPS;
+    c.instability_latch_ms = cfg::GUIDED_DROP_INSTABILITY_LATCH_MS;
+    c.final_approach_radius_m = cfg::FINAL_APPROACH_RADIUS_M;
+    c.gps_max_position_jump_m = cfg::GPS_MAX_JUMP_M;
+    c.gps_recovery_fix_count = cfg::GPS_RECOVERY_FIX_COUNT;
+    c.imu_course_hold_enabled = cfg::GUIDED_DROP_IMU_COURSE_HOLD_ENABLED;
+    c.imu_course_hold_max_ms = cfg::GUIDED_DROP_IMU_COURSE_HOLD_MAX_MS;
+    c.imu_course_hold_max_command = cfg::GUIDED_DROP_IMU_COURSE_HOLD_MAX_COMMAND;
+    c.oscillation_sign_change_limit = cfg::GUIDED_DROP_OSCILLATION_SIGN_CHANGES;
+    c.oscillation_window_ms = cfg::GUIDED_DROP_OSCILLATION_WINDOW_MS;
+    c.guidance.kp = cfg::GUIDANCE_KP;
+    c.guidance.deadband_deg = cfg::GUIDANCE_DEADBAND_DEG;
+    c.guidance.max_steering = cfg::GUIDED_DROP_MAX_STEERING;
+    c.guidance.low_speed_max_command = 0.05f;
+    c.guidance.unreachable_max_command = cfg::GUIDED_DROP_MAX_STEERING;
+    c.guidance.cmd_rate_limit_per_s = cfg::CMD_RATE_LIMIT_PER_S;
+    c.guidance.reversal_guard_ms = cfg::MIN_TURN_REVERSAL_TIME_MS;
+    c.guidance.final_approach_kp = cfg::FINAL_APPROACH_KP;
+    c.guidance.final_approach_max_command = cfg::GUIDED_DROP_FINAL_MAX_STEERING;
+    c.guidance.final_approach_altitude_m = cfg::FINAL_APPROACH_ALTITUDE_M;
+    c.guidance.flare_enabled = false;
+    c.guidance.min_guidance_altitude_m = cfg::MIN_GUIDANCE_ALTITUDE_M;
+    c.guidance.target_accept_radius_m = cfg::TARGET_ACCEPT_RADIUS_M;
+    c.guidance.min_course_speed_mps = cfg::GPS_MIN_GROUND_SPEED_FOR_COURSE;
+    return c;
+}
 
 static logic::TiltStabilizerConfig tiltStabilizerConfig() {
     logic::TiltStabilizerConfig c;
@@ -119,6 +181,8 @@ static logic::DropTestConfig dropTestConfig() {
     c.release_speed_mps = cfg::DROP_TEST_RELEASE_SPEED_MPS;
     c.release_altitude_loss_m = cfg::DROP_TEST_RELEASE_ALT_LOSS_M;
     c.release_confirm_ms = cfg::DROP_TEST_RELEASE_CONFIRM_MS;
+    c.release_imu_accel_mps2 = cfg::DROP_TEST_RELEASE_IMU_ACCEL_MPS2;
+    c.release_candidate_timeout_ms = cfg::DROP_TEST_RELEASE_CANDIDATE_TIMEOUT_MS;
     c.canopy_observation_delay_ms = cfg::DROP_TEST_CANOPY_OBSERVATION_DELAY_MS;
     c.canopy_deceleration_delta_mps = cfg::DROP_TEST_CANOPY_DECEL_DELTA_MPS;
     c.canopy_accel_signature_mps2 = cfg::DROP_TEST_CANOPY_ACCEL_SIGNATURE_MPS2;
@@ -181,6 +245,10 @@ void setup() {
     if (!cfg::loadConfig()) {
         Serial.println("[BOOT] WARNING: Using default config");
     }
+    if (cfg::PIN_GUIDED_DROP_ARM_SWITCH >= 0) {
+        pinMode(cfg::PIN_GUIDED_DROP_ARM_SWITCH,
+                cfg::GUIDED_DROP_ARM_ACTIVE_LOW ? INPUT_PULLUP : INPUT_PULLDOWN);
+    }
 
     // Target persistence must not depend on the payload web dashboard.
     loadPersistedTarget();
@@ -213,7 +281,21 @@ void setup() {
     coordinator = logic::FlightCoordinator(coordinatorConfig());
     drop_test_controller = logic::DropTestController(dropTestConfig());
     tilt_stabilizer = logic::TiltStabilizer(tiltStabilizerConfig());
+    servo_retract_test = logic::ServoRetractTest(servoRetractTestConfig());
+    guided_drop_controller = logic::GuidedDropController(guidedDropConfig());
     vehicle.configuration_version = cfg::CONFIG_VERSION;
+
+    const esp_reset_reason_t reset_reason =
+        static_cast<esp_reset_reason_t>(vehicle.reset_reason);
+    boot_reset_fail_neutral = reset_reason == ESP_RST_PANIC ||
+        reset_reason == ESP_RST_INT_WDT || reset_reason == ESP_RST_TASK_WDT ||
+        reset_reason == ESP_RST_WDT || reset_reason == ESP_RST_BROWNOUT ||
+        reset_reason == ESP_RST_UNKNOWN;
+    if (boot_reset_fail_neutral) {
+        coordinator.forceFailsafe(logic::FailCode::FAIL_REBOOT_UNCERTAIN,
+                                  millis());
+        guided_abort_latched = true;
+    }
 
     // Initialize logging
     phoenix::logging::FlashLoggerConfig log_cfg;
@@ -228,6 +310,19 @@ void setup() {
     ring_cfg.max_entries = 500;
     if (!ring_buf.begin(ring_cfg)) {
         Serial.println("[BOOT] WARNING: Ring buffer init failed");
+    }
+
+    // Establish calibrated neutral before sensor calibration or radio startup.
+    // This minimizes the interval in which a rebooted servo signal could float.
+    control::ServoConfig boot_servo_cfg;
+    boot_servo_cfg.left_channel = cfg::SERVO_LEFT_CHANNEL;
+    boot_servo_cfg.right_channel = cfg::SERVO_RIGHT_CHANNEL;
+    if (servos.begin(boot_servo_cfg)) {
+        servos.emergencyNeutral();
+        Serial.println("[BOOT] Servos attached at calibrated neutral");
+    } else {
+        Serial.println("[BOOT] ERROR: servo neutral initialization failed");
+        vehicle.failure_code = logic::FailCode::FAIL_SERVO;
     }
 
     // Initialize sensors
@@ -249,7 +344,12 @@ void setup() {
     // Start logging at boot so self-test, launch detection, and every later
     // transition share one explainable timeline.
     if (!flash_log.isLogging()) flash_log.startFlightLog();
-    if (flash_log.isLogging()) flash_log.logEvent("PHOENIX_RECOVERY_BOOT");
+    if (flash_log.isLogging()) {
+        flash_log.logEvent("PHOENIX_RECOVERY_BOOT");
+        if (boot_reset_fail_neutral) {
+            flash_log.logEvent("REBOOT_UNCERTAIN_FAIL_NEUTRAL");
+        }
+    }
 
     last_loop_ms = millis();
     Serial.println("[BOOT] PHOENIX RECOVERY ready");
@@ -441,6 +541,96 @@ void loop() {
     }
     previous_tilt_active = tilt_output.active;
 
+    // ---- Automatic unloaded extension/return-to-neutral service test ----
+    // This deliberately shares the existing sensor-independent bench gate and
+    // the calibrated bench-servo output path. It cannot become active after
+    // launch, while armed, or while a drop recording is open.
+    logic::ServoRetractTestInput retract_in;
+    retract_in.now_ms = now;
+    retract_in.preflight_allowed = benchServoActuationAllowed(now);
+    retract_in.servo_healthy = servos.isHealthy();
+    const logic::ServoRetractTestOutput retract_output =
+        servo_retract_test.step(retract_in);
+    vehicle.servo_retract_test_status = retract_output.status;
+    vehicle.servo_retract_test_active = retract_output.active;
+    static logic::ServoRetractTestStatus previous_retract_status =
+        logic::ServoRetractTestStatus::IDLE;
+    if (retract_output.status != previous_retract_status) {
+        const char* event = logic::servoRetractTestStatusName(retract_output.status);
+        ring_buf.pushEvent(event);
+        flash_log.logEvent(event);
+        previous_retract_status = retract_output.status;
+    }
+
+    // ---- Calibration-locked return-to-target inert-drop controller ----
+    const logic::GuidedArmResult guided_arm_snapshot =
+        guided_drop_arm_gate.snapshot(now);
+    vehicle.guided_arm_status = guided_arm_snapshot.status;
+    vehicle.guided_canopy_confirmed = guided_arm_snapshot.canopy_confirmed;
+    vehicle.guided_confirmation_pending = guided_arm_snapshot.confirmation_pending;
+    vehicle.guided_physical_arm_active = guidedPhysicalArmActive();
+    vehicle.guided_authority = guided_authority;
+    vehicle.guided_authority_limit = guidedAuthorityLimit(guided_authority);
+    vehicle.guided_abort_latched = guided_abort_latched;
+    vehicle.guided_profile_unlock_flags =
+        (cfg::GUIDED_DROP_TEST_ENABLED ? 1U : 0U) |
+        (cfg::GUIDED_DROP_CALIBRATION_CONFIRMED ? 2U : 0U) |
+        (cfg::GUIDED_DROP_20_PERCENT_UNLOCKED ? 4U : 0U) |
+        (cfg::GUIDED_DROP_40_PERCENT_UNLOCKED ? 8U : 0U) |
+        (cfg::GUIDED_DROP_VALIDATED_FULL_UNLOCKED ? 16U : 0U);
+    logic::GuidedDropInput guided_in;
+    guided_in.now_ms = now;
+    guided_in.dt_s = dt_s;
+    guided_in.guided_test_requested = guided_drop_requested;
+    guided_in.drop_recording = vehicle.drop_test_recording;
+    guided_in.drop_state = vehicle.drop_test_state;
+    guided_in.release_confirm_ms = vehicle.drop_test_release_confirm_ms;
+    guided_in.stable_descent_observed = vehicle.drop_test_stable_descent_ms != 0;
+    guided_in.canopy_confirmed = vehicle.guided_canopy_confirmed;
+    guided_in.abort_latched = guided_abort_latched;
+    guided_in.authority = guided_authority;
+    guided_in.authority_limit = vehicle.guided_authority_limit;
+    guided_in.latitude = vehicle.latitude;
+    guided_in.longitude = vehicle.longitude;
+    guided_in.target_latitude = vehicle.target_latitude;
+    guided_in.target_longitude = vehicle.target_longitude;
+    guided_in.altitude_agl_m = vehicle.altitude_agl_m;
+    guided_in.ground_speed_mps = vehicle.ground_speed_mps;
+    guided_in.gps_course_deg = vehicle.gps_course_deg;
+    guided_in.imu_heading_deg = vehicle.yaw_deg;
+    guided_in.angular_rate_dps = vehicle.angular_rate_dps;
+    guided_in.gps_valid = vehicle.gps_valid;
+    guided_in.imu_valid = vehicle.imu_valid;
+    guided_in.barometer_valid = vehicle.barometer_valid;
+    guided_in.servo_valid = servos.isHealthy();
+    guided_in.gps_age_ms = vehicle.gps_age_ms;
+    guided_in.imu_age_ms = vehicle.imu_age_ms;
+    guided_in.barometer_age_ms = vehicle.baro_age_ms;
+    const logic::GuidedDropOutput guided_output =
+        guided_drop_controller.step(guided_in);
+    vehicle.guided_drop_status = guided_output.status;
+    vehicle.guided_drop_requested = guided_drop_requested;
+    vehicle.guided_drop_active = guided_output.active;
+    vehicle.guided_gps_suspect = guided_output.gps_suspect;
+    vehicle.guided_course_hold_active = guided_output.course_hold_active;
+    vehicle.guided_oscillation_damping = guided_output.oscillation_damping_active;
+    static logic::GuidedDropStatus previous_guided_status =
+        logic::GuidedDropStatus::FEATURE_DISABLED;
+    if (guided_output.status != previous_guided_status) {
+        const char* event = logic::guidedDropStatusName(guided_output.status);
+        ring_buf.pushEvent(event);
+        flash_log.logEvent(event);
+        previous_guided_status = guided_output.status;
+    }
+    if (guided_drop_requested) {
+        vehicle.drop_test_neutral_lock = guided_output.neutral_required;
+        vehicle.requested_left_servo_command = guided_output.left_brake;
+        vehicle.requested_right_servo_command = guided_output.right_brake;
+        vehicle.target_bearing_deg = guided_output.target_bearing_deg;
+        vehicle.heading_error_deg = guided_output.heading_error_deg;
+        vehicle.distance_to_target_m = guided_output.distance_to_target_m;
+    }
+
     health.update(vehicle);
     const bool ground_servo_test_active =
         cfg::PAYLOAD_WIFI_ENABLED && wifi.isServoTestActive();
@@ -454,6 +644,9 @@ void loop() {
         ring_buf.pushEvent("LORA_BENCH_SERVO_INTERLOCK");
         flash_log.logEvent("LORA_BENCH_SERVO_INTERLOCK");
     }
+    if (retract_output.interlocked) {
+        servos.emergencyNeutral();
+    }
 
     // An explicit, time-limited, prelaunch bench command may operate even when
     // sensors placed the flight coordinator in failsafe. It is gated by launch,
@@ -462,9 +655,18 @@ void loop() {
         servos.setBenchServoCommands(lora_remote_servo1_command,
                                      lora_remote_servo2_command);
         servos.update();
+    } else if (retract_output.active && bench_allowed_now) {
+        servos.setBenchServoCommands(retract_output.servo1_command,
+                                     retract_output.servo2_command);
+        servos.update();
     } else if (command.failsafe_active || command.state == logic::FlightState::LANDED ||
         vehicle.drop_test_neutral_lock) {
         servos.emergencyNeutral();
+    } else if (guided_drop_requested && guided_output.active) {
+        servos.setGuidedDropBrakeCommands(guided_output.left_brake,
+                                          guided_output.right_brake,
+                                          vehicle.guided_authority_limit);
+        servos.update();
     } else if (tilt_output.active) {
         servos.setBrakeCommands(tilt_output.left_brake, tilt_output.right_brake);
         servos.update();
@@ -523,8 +725,23 @@ void loop() {
         last_log_ms = now;
     }
 
-    // ---- Optional payload WiFi dashboard ----
-    if (cfg::PAYLOAD_WIFI_ENABLED) wifi.update();
+    // ---- Optional payload WiFi dashboard / post-landing log service ----
+    const bool recovery_wifi_allowed =
+        cfg::PAYLOAD_POST_LANDING_WIFI_ENABLED &&
+        !vehicle.drop_test_recording &&
+        (vehicle.flight_state == logic::FlightState::LANDED ||
+         vehicle.drop_test_state == phoenix::DropTestState::TEST_COMPLETE);
+    if (!cfg::PAYLOAD_WIFI_ENABLED && recovery_wifi_allowed &&
+        !wifi.isRunning() &&
+        now - last_post_landing_wifi_attempt_ms >= cfg::WIFI_RECOVERY_CHECK_MS) {
+        last_post_landing_wifi_attempt_ms = now;
+        if (wifi.begin(&vehicle, &servos)) {
+            ring_buf.pushEvent("POST_LANDING_WIFI_STARTED");
+            Serial.printf("[RECOVERY] Payload log service: http://%s/recovery\n",
+                          wifi.getAPIP().toString().c_str());
+        }
+    }
+    if (cfg::PAYLOAD_WIFI_ENABLED || wifi.isRunning()) wifi.update();
 
     // Periodic hardware diagnostics are intentionally concise enough to leave
     // enabled in bench builds. They verify that initialized devices continue
@@ -560,6 +777,53 @@ bool benchServoActuationAllowed(uint32_t now) {
     return logic::benchServoTestAllowed(gate);
 }
 
+bool guidedPhysicalArmActive() {
+    if (cfg::PIN_GUIDED_DROP_ARM_SWITCH < 0) return false;
+    const int level = digitalRead(cfg::PIN_GUIDED_DROP_ARM_SWITCH);
+    return cfg::GUIDED_DROP_ARM_ACTIVE_LOW ? level == LOW : level == HIGH;
+}
+
+logic::GuidedDropUnlocks guidedDropUnlocks() {
+    logic::GuidedDropUnlocks unlocks;
+    unlocks.feature_enabled = cfg::GUIDED_DROP_TEST_ENABLED;
+    unlocks.calibration_confirmed = cfg::GUIDED_DROP_CALIBRATION_CONFIRMED;
+    unlocks.twenty_percent_unlocked = cfg::GUIDED_DROP_20_PERCENT_UNLOCKED;
+    unlocks.forty_percent_unlocked = cfg::GUIDED_DROP_40_PERCENT_UNLOCKED;
+    unlocks.validated_full_unlocked = cfg::GUIDED_DROP_VALIDATED_FULL_UNLOCKED;
+    return unlocks;
+}
+
+logic::GuidedArmPrerequisites guidedArmPrerequisites() {
+    logic::GuidedArmPrerequisites prerequisites;
+    prerequisites.physical_arm_active = guidedPhysicalArmActive();
+    prerequisites.target_valid = isfinite(vehicle.target_latitude) &&
+        isfinite(vehicle.target_longitude) &&
+        vehicle.target_latitude >= -90.0 && vehicle.target_latitude <= 90.0 &&
+        vehicle.target_longitude >= -180.0 && vehicle.target_longitude <= 180.0 &&
+        !(fabs(vehicle.target_latitude) < 1e-9 &&
+          fabs(vehicle.target_longitude) < 1e-9);
+    prerequisites.gps_valid = vehicle.gps_valid &&
+        vehicle.gps_age_ms <= cfg::SENSOR_TIMEOUT_MS;
+    prerequisites.imu_valid = vehicle.imu_valid &&
+        vehicle.imu_age_ms <= cfg::SENSOR_TIMEOUT_MS;
+    prerequisites.barometer_valid = vehicle.barometer_valid &&
+        vehicle.baro_age_ms <= cfg::SENSOR_TIMEOUT_MS;
+    prerequisites.servo_valid = servos.isHealthy();
+    prerequisites.log_ready = flash_log.isLogging();
+    prerequisites.recorder_idle = !vehicle.drop_test_recording;
+    return prerequisites;
+}
+
+float guidedAuthorityLimit(logic::GuidedAuthorityLevel level) {
+    switch (level) {
+        case logic::GuidedAuthorityLevel::TWENTY_PERCENT: return 0.20f;
+        case logic::GuidedAuthorityLevel::FORTY_PERCENT: return 0.40f;
+        case logic::GuidedAuthorityLevel::VALIDATED_FULL:
+            return cfg::GUIDED_DROP_MAX_STEERING;
+        default: return 0.0f;
+    }
+}
+
 static void publishDropTestOutput(const logic::DropTestOutput& out) {
     vehicle.drop_test_state = out.state;
     vehicle.drop_test_recording = out.recording;
@@ -576,6 +840,18 @@ static void publishDropTestOutput(const logic::DropTestOutput& out) {
     // synchronized here makes abort/completion release later bench testing.
     vehicle.armed = out.recording;
     vehicle.armed_ms = out.recording ? out.armed_ms : 0;
+    if (!out.recording && guided_drop_requested) {
+        guided_drop_requested = false;
+        guided_drop_controller.reset();
+        guided_drop_arm_gate.reset();
+        guided_authority = logic::GuidedAuthorityLevel::NEUTRAL;
+        vehicle.guided_drop_requested = false;
+        vehicle.guided_drop_active = false;
+        vehicle.guided_canopy_confirmed = false;
+        vehicle.guided_confirmation_pending = false;
+        vehicle.guided_authority = logic::GuidedAuthorityLevel::NEUTRAL;
+        vehicle.guided_authority_limit = 0.0f;
+    }
 
     struct EventName { uint16_t bit; const char* name; };
     static const EventName names[] = {
@@ -604,8 +880,26 @@ static void publishDropTestOutput(const logic::DropTestOutput& out) {
     }
 }
 
-bool armDropTest(uint32_t now) {
+bool armDropTest(uint32_t now, bool guided_return) {
     if (!cfg::DROP_TEST_MODE_ENABLED) return false;
+    const bool target_valid = isfinite(vehicle.target_latitude) &&
+        isfinite(vehicle.target_longitude) &&
+        vehicle.target_latitude >= -90.0 && vehicle.target_latitude <= 90.0 &&
+        vehicle.target_longitude >= -180.0 && vehicle.target_longitude <= 180.0 &&
+        !(fabs(vehicle.target_latitude) < 1e-9 &&
+          fabs(vehicle.target_longitude) < 1e-9);
+    if (guided_return &&
+        (!cfg::GUIDED_DROP_TEST_ENABLED ||
+         !cfg::GUIDED_DROP_CALIBRATION_CONFIRMED ||
+         !target_valid || !vehicle.gps_valid ||
+         !vehicle.guided_canopy_confirmed ||
+         !guidedPhysicalArmActive() ||
+         guided_authority == logic::GuidedAuthorityLevel::NEUTRAL)) {
+        vehicle.drop_test_rejected_count++;
+        ring_buf.pushEvent("GUIDED_DROP_ARM_REJECTED");
+        flash_log.logEvent("GUIDED_DROP_ARM_REJECTED");
+        return false;
+    }
     const bool terminal =
         vehicle.drop_test_state == phoenix::DropTestState::IDLE ||
         vehicle.drop_test_state == phoenix::DropTestState::TEST_COMPLETE ||
@@ -637,12 +931,46 @@ bool armDropTest(uint32_t now) {
     const logic::DropTestOutput armed =
         drop_test_controller.arm(now, vehicle.altitude_agl_m);
     publishDropTestOutput(armed);
+    guided_drop_controller.reset();
+    guided_drop_requested = guided_return;
+    guided_abort_latched = false;
+    vehicle.guided_drop_requested = guided_return;
     // The new controller is intentionally stricter: an inert recording run is
     // always neutral-locked, regardless of radio or dashboard state.
     vehicle.drop_test_neutral_lock = true;
     servos.emergencyNeutral();
-    ring_buf.pushEvent("DROP_TEST_ARMED");
-    flash_log.logEvent("DROP_TEST_ARMED");
+    const char* armed_event = guided_return
+        ? "GUIDED_DROP_TEST_ARMED" : "DROP_TEST_ARMED";
+    ring_buf.pushEvent(armed_event);
+    flash_log.logEvent(armed_event);
+    if (guided_return) {
+        // The visual confirmation may have been recorded in the preceding
+        // boot/preflight log. Repeat it in the newly opened test file so that
+        // the guided-run evidence is self-contained.
+        flash_log.logEvent("GUIDED_CANOPY_VISUALLY_CONFIRMED");
+    }
+    phoenix::logging::ConfigurationSnapshotV1 snapshot{};
+    snapshot.schema_version = 1;
+    snapshot.guided_authority = static_cast<uint8_t>(guided_authority);
+    snapshot.flare_enabled = 0;
+    snapshot.servo1_controls_left_brake =
+        servos.servo1ControlsLeftBrake() ? 1U : 0U;
+    snapshot.configuration_version = cfg::CONFIG_VERSION;
+    snapshot.target_latitude = vehicle.target_latitude;
+    snapshot.target_longitude = vehicle.target_longitude;
+    const control::ServoController::Calibration& servo1 =
+        servos.getLeftCalibration();
+    const control::ServoController::Calibration& servo2 =
+        servos.getRightCalibration();
+    snapshot.servo1_neutral_us = servo1.neutral_us;
+    snapshot.servo1_min_us = servo1.min_us;
+    snapshot.servo1_max_us = servo1.max_us;
+    snapshot.servo1_max_brake_us = servo1.max_brake_us;
+    snapshot.servo2_neutral_us = servo2.neutral_us;
+    snapshot.servo2_min_us = servo2.min_us;
+    snapshot.servo2_max_us = servo2.max_us;
+    snapshot.servo2_max_brake_us = servo2.max_brake_us;
+    flash_log.logConfigurationSnapshot(snapshot);
     flash_log.logTelemetry(vehicle);
     return true;
 }
@@ -652,6 +980,8 @@ void abortDropTest(uint32_t now, const char* reason) {
     lora_bench_servo_active = false;
     lora_remote_servo1_command = 0.0f;
     lora_remote_servo2_command = 0.0f;
+    guided_abort_latched = true;
+    vehicle.guided_abort_latched = true;
     servos.emergencyNeutral();
 
     if (vehicle.drop_test_recording) {
@@ -663,6 +993,8 @@ void abortDropTest(uint32_t now, const char* reason) {
         const logic::DropTestOutput aborted = drop_test_controller.abort(now);
         publishDropTestOutput(aborted);
     }
+    guided_drop_requested = false;
+    guided_drop_controller.reset();
 }
 
 void updateDropTestRecording() {
@@ -787,6 +1119,7 @@ void updateLoRaRemoteControl() {
         case comms::LoRaRemoteCommandType::NEUTRAL:
             lora_remote_manual_active = false;
             lora_bench_servo_active = false;
+            servo_retract_test.stop();
             lora_tilt_stabilizer_requested = false;
             lora_tilt_stabilizer_restart_locked = false;
             tilt_stabilizer.disarm();
@@ -814,6 +1147,7 @@ void updateLoRaRemoteControl() {
                                                     -cfg::LORA_BENCH_MAX_SERVO_COMMAND,
                                                     cfg::LORA_BENCH_MAX_SERVO_COMMAND);
             lora_remote_manual_active = false;
+            servo_retract_test.stop();
             lora_tilt_stabilizer_requested = false;
             lora_tilt_stabilizer_restart_locked = false;
             tilt_stabilizer.disarm();
@@ -825,14 +1159,79 @@ void updateLoRaRemoteControl() {
             break;
         }
         case comms::LoRaRemoteCommandType::ARM_DROP_TEST:
+            servo_retract_test.stop();
             lora_tilt_stabilizer_requested = false;
             tilt_stabilizer.disarm();
-            if (armDropTest(now)) {
+            if (armDropTest(now, false)) {
                 vehicle.lora_remote_accepted_count++;
             } else {
                 vehicle.lora_remote_rejected_count++;
             }
             break;
+        case comms::LoRaRemoteCommandType::CONFIRM_CANOPY_READY: {
+            servo_retract_test.stop();
+            lora_tilt_stabilizer_requested = false;
+            tilt_stabilizer.disarm();
+            const logic::GuidedArmResult result =
+                guided_drop_arm_gate.confirmCanopy(now, !vehicle.drop_test_recording);
+            vehicle.guided_arm_status = result.status;
+            vehicle.guided_canopy_confirmed = result.canopy_confirmed;
+            if (result.canopy_confirmed) {
+                vehicle.lora_remote_accepted_count++;
+                ring_buf.pushEvent("GUIDED_CANOPY_VISUALLY_CONFIRMED");
+                flash_log.logEvent("GUIDED_CANOPY_VISUALLY_CONFIRMED");
+            } else {
+                vehicle.lora_remote_rejected_count++;
+            }
+            break;
+        }
+        case comms::LoRaRemoteCommandType::PREPARE_GUIDED_DROP_TEST: {
+            servo_retract_test.stop();
+            lora_tilt_stabilizer_requested = false;
+            tilt_stabilizer.disarm();
+            logic::GuidedAuthorityLevel requested =
+                logic::GuidedAuthorityLevel::NEUTRAL;
+            if (remote.servo1_command >= 0.75f) {
+                requested = logic::GuidedAuthorityLevel::VALIDATED_FULL;
+            } else if (remote.servo1_command >= 0.30f) {
+                requested = logic::GuidedAuthorityLevel::FORTY_PERCENT;
+            } else if (remote.servo1_command >= 0.15f) {
+                requested = logic::GuidedAuthorityLevel::TWENTY_PERCENT;
+            }
+            const logic::GuidedArmResult result = guided_drop_arm_gate.prepare(
+                now, requested, guidedDropUnlocks(), guidedArmPrerequisites());
+            vehicle.guided_arm_status = result.status;
+            vehicle.guided_confirmation_pending = result.confirmation_pending;
+            if (result.confirmation_pending) {
+                guided_authority = result.authority;
+                vehicle.guided_authority = result.authority;
+                vehicle.lora_remote_accepted_count++;
+                ring_buf.pushEvent("GUIDED_DROP_PREPARED");
+                flash_log.logEvent("GUIDED_DROP_PREPARED");
+            } else {
+                vehicle.lora_remote_rejected_count++;
+                ring_buf.pushEvent(logic::guidedArmStatusName(result.status));
+                flash_log.logEvent(logic::guidedArmStatusName(result.status));
+            }
+            break;
+        }
+        case comms::LoRaRemoteCommandType::ARM_GUIDED_DROP_TEST: {
+            servo_retract_test.stop();
+            lora_tilt_stabilizer_requested = false;
+            tilt_stabilizer.disarm();
+            const logic::GuidedArmResult result = guided_drop_arm_gate.confirmAndArm(
+                now, guidedDropUnlocks(), guidedArmPrerequisites());
+            vehicle.guided_arm_status = result.status;
+            vehicle.guided_confirmation_pending = result.confirmation_pending;
+            if (result.arm_authorized && armDropTest(now, true)) {
+                vehicle.lora_remote_accepted_count++;
+            } else {
+                vehicle.lora_remote_rejected_count++;
+                ring_buf.pushEvent(logic::guidedArmStatusName(result.status));
+                flash_log.logEvent(logic::guidedArmStatusName(result.status));
+            }
+            break;
+        }
         case comms::LoRaRemoteCommandType::ABORT_DROP_TEST:
             abortDropTest(now, "DROP_TEST_ABORTED_BY_GROUND");
             vehicle.lora_remote_accepted_count++;
@@ -871,6 +1270,7 @@ void updateLoRaRemoteControl() {
                                                    -cfg::LORA_REMOTE_MAX_BRAKE_COMMAND,
                                                    cfg::LORA_REMOTE_MAX_BRAKE_COMMAND);
             lora_remote_manual_active = true;
+            servo_retract_test.stop();
             lora_tilt_stabilizer_requested = false;
             tilt_stabilizer.disarm();
             lora_remote_command_expires_ms = now + cfg::LORA_REMOTE_COMMAND_TIMEOUT_MS;
@@ -898,6 +1298,7 @@ void updateLoRaRemoteControl() {
             }
             lora_remote_manual_active = false;
             lora_bench_servo_active = false;
+            servo_retract_test.stop();
             if (!tilt_stabilizer.isArmed()) {
                 tilt_stabilizer.arm(now, vehicle.roll_deg);
                 ring_buf.pushEvent("TILT_STABILIZER_ARMED");
@@ -907,6 +1308,27 @@ void updateLoRaRemoteControl() {
             lora_tilt_stabilizer_expires_ms =
                 now + cfg::TILT_STABILIZER_COMMAND_TIMEOUT_MS;
             vehicle.lora_remote_accepted_count++;
+            break;
+        }
+        case comms::LoRaRemoteCommandType::START_SERVO_RETRACT_TEST: {
+            const bool safe = cfg::SERVO_RETRACT_TEST_ENABLED &&
+                benchServoActuationAllowed(now);
+            lora_remote_manual_active = false;
+            lora_bench_servo_active = false;
+            lora_tilt_stabilizer_requested = false;
+            lora_tilt_stabilizer_restart_locked = false;
+            tilt_stabilizer.disarm();
+            const logic::ServoRetractTestOutput started =
+                servo_retract_test.start(now, safe, servos.isHealthy());
+            if (started.active) {
+                vehicle.lora_remote_accepted_count++;
+                ring_buf.pushEvent("SERVO_RETRACT_TEST_STARTED");
+                flash_log.logEvent("SERVO_RETRACT_TEST_STARTED");
+            } else {
+                servos.emergencyNeutral();
+                vehicle.lora_remote_rejected_count++;
+                ring_buf.pushEvent("SERVO_RETRACT_TEST_REJECTED");
+            }
             break;
         }
         case comms::LoRaRemoteCommandType::STOP_TILT_STABILIZER:
@@ -922,6 +1344,7 @@ void updateLoRaRemoteControl() {
             lora_remote_runtime_enabled = false;
             lora_remote_manual_active = false;
             lora_bench_servo_active = false;
+            servo_retract_test.stop();
             lora_tilt_stabilizer_requested = false;
             lora_tilt_stabilizer_restart_locked = false;
             tilt_stabilizer.disarm();
@@ -991,11 +1414,8 @@ bool initializeSubsystems() {
 
     // Servos
     Serial.print("[INIT] Servos... ");
-    control::ServoConfig servo_cfg;
-    servo_cfg.left_channel = cfg::SERVO_LEFT_CHANNEL;
-    servo_cfg.right_channel = cfg::SERVO_RIGHT_CHANNEL;
-    if (servos.begin(servo_cfg)) {
-        Serial.println("OK");
+    if (servos.isHealthy()) {
+        Serial.println("OK (neutral already established)");
     } else {
         Serial.println("FAILED");
         all_ok = false;

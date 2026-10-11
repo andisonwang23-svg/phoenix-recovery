@@ -60,6 +60,8 @@ struct DropTestConfig {
     float release_speed_mps = -1.0f;
     float release_altitude_loss_m = 1.5f;
     uint32_t release_confirm_ms = 400;
+    float release_imu_accel_mps2 = 2.0f;
+    uint32_t release_candidate_timeout_ms = 3000;
 
     // A change in descent rate or a linear-acceleration transient may mark an
     // inflation/load event.  It is intentionally called "suspected" until

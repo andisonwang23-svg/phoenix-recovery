@@ -77,6 +77,9 @@ static uint32_t failed_count = 0;
 static uint32_t last_send_ms = 0;
 static uint32_t telemetry_received_count = 0;
 static uint32_t telemetry_invalid_count = 0;
+static uint8_t home_stable_fix_count = 0;
+static double previous_home_candidate_latitude = 0.0;
+static double previous_home_candidate_longitude = 0.0;
 static int16_t last_command_rssi = 0;
 static float last_command_snr = 0.0f;
 static volatile bool lora_packet_received = false;
@@ -158,6 +161,14 @@ struct TelemetrySnapshot {
     uint8_t satellites_in_view = 0;
     bool gps_valid = false;
     bool gps_nmea_active = false;
+    uint16_t configuration_version = 0;
+    uint32_t gps_age_ms = 0;
+    uint32_t baro_age_ms = 0;
+    uint32_t imu_age_ms = 0;
+    float battery_voltage_v = 0.0f;
+    float servo_rail_voltage_v = 0.0f;
+    bool battery_voltage_valid = false;
+    bool servo_rail_voltage_valid = false;
     bool imu_valid = false;
     bool baro_valid = false;
     phoenix::DropTestState drop_test_state = phoenix::DropTestState::IDLE;
@@ -187,6 +198,21 @@ struct TelemetrySnapshot {
     bool bench_servo_active = false;
     bool payload_armed = false;
     bool servo_healthy = false;
+    logic::ServoRetractTestStatus servo_retract_test_status =
+        logic::ServoRetractTestStatus::IDLE;
+    bool servo_retract_test_active = false;
+    logic::GuidedDropStatus guided_drop_status =
+        logic::GuidedDropStatus::FEATURE_DISABLED;
+    uint8_t guided_authority_percent = 0;
+    bool guided_canopy_confirmed = false;
+    bool guided_confirmation_pending = false;
+    bool guided_physical_arm_active = false;
+    bool guided_abort_latched = false;
+    bool guided_gps_suspect = false;
+    bool guided_course_hold_active = false;
+    bool guided_oscillation_damping = false;
+    bool guided_active = false;
+    uint8_t guided_profile_unlock_flags = 0;
     uint8_t payload_reset_reason = 0;
     int16_t rssi = 0;
     float snr = 0.0f;
@@ -265,7 +291,7 @@ uint16_t crc16CcittLocal(const uint8_t* data, size_t len) {
 
 bool validTelemetryPacket(const telemetry::TelemetryPacketV1& packet) {
     if (packet.magic[0] != 0x50 || packet.magic[1] != 0x52) return false;
-    if (packet.version != 7) return false;
+    if (packet.version != 8) return false;
     const uint16_t expected = crc16CcittLocal(
         reinterpret_cast<const uint8_t*>(&packet),
         sizeof(telemetry::TelemetryPacketV1) - sizeof(packet.crc)
@@ -404,6 +430,14 @@ void pollTelemetry() {
     telemetry.satellites_in_view = packet.satellites_in_view;
     telemetry.gps_valid = packet.gps_valid != 0 || packet.gps_fix_valid != 0;
     telemetry.gps_nmea_active = (packet.drop_test_flags & 4U) != 0;
+    telemetry.configuration_version = packet.configuration_version;
+    telemetry.gps_age_ms = static_cast<uint32_t>(packet.gps_age_100ms) * 100U;
+    telemetry.baro_age_ms = static_cast<uint32_t>(packet.baro_age_100ms) * 100U;
+    telemetry.imu_age_ms = static_cast<uint32_t>(packet.imu_age_100ms) * 100U;
+    telemetry.battery_voltage_v = static_cast<float>(packet.battery_mv) / 1000.0f;
+    telemetry.servo_rail_voltage_v = static_cast<float>(packet.servo_rail_mv) / 1000.0f;
+    telemetry.battery_voltage_valid = (packet.power_valid_flags & 1U) != 0;
+    telemetry.servo_rail_voltage_valid = (packet.power_valid_flags & 2U) != 0;
     telemetry.imu_valid = packet.imu_valid != 0;
     telemetry.baro_valid = packet.baro_valid != 0;
     telemetry.drop_test_state = static_cast<phoenix::DropTestState>(packet.drop_test_state);
@@ -436,6 +470,47 @@ void pollTelemetry() {
     telemetry.bench_servo_active = (packet.remote_status_flags & 16U) != 0;
     telemetry.payload_armed = (packet.remote_status_flags & 32U) != 0;
     telemetry.servo_healthy = (packet.remote_status_flags & 64U) != 0;
+    telemetry.servo_retract_test_active = (packet.remote_status_flags & 128U) != 0;
+    telemetry.servo_retract_test_status =
+        static_cast<logic::ServoRetractTestStatus>(packet.service_test_status & 0x0FU);
+    telemetry.guided_drop_status =
+        static_cast<logic::GuidedDropStatus>((packet.service_test_status >> 4U) & 0x0FU);
+    telemetry.guided_authority_percent = packet.guided_authority_percent;
+    telemetry.guided_canopy_confirmed = (packet.guided_flags & 1U) != 0;
+    telemetry.guided_confirmation_pending = (packet.guided_flags & 2U) != 0;
+    telemetry.guided_physical_arm_active = (packet.guided_flags & 4U) != 0;
+    telemetry.guided_abort_latched = (packet.guided_flags & 8U) != 0;
+    telemetry.guided_gps_suspect = (packet.guided_flags & 16U) != 0;
+    telemetry.guided_course_hold_active = (packet.guided_flags & 32U) != 0;
+    telemetry.guided_oscillation_damping = (packet.guided_flags & 64U) != 0;
+    telemetry.guided_active = (packet.guided_flags & 128U) != 0;
+    telemetry.guided_profile_unlock_flags = packet.guided_profile_unlock_flags;
+    if (telemetry.gps_valid && std::isfinite(telemetry.latitude) &&
+        std::isfinite(telemetry.longitude)) {
+        if (home_stable_fix_count == 0) {
+            home_stable_fix_count = 1;
+        } else {
+            const double lat_scale_m = 111320.0;
+            const double mean_lat_rad =
+                (telemetry.latitude + previous_home_candidate_latitude) *
+                0.5 * 3.141592653589793 / 180.0;
+            const double north_m =
+                (telemetry.latitude - previous_home_candidate_latitude) * lat_scale_m;
+            const double east_m =
+                (telemetry.longitude - previous_home_candidate_longitude) *
+                lat_scale_m * cos(mean_lat_rad);
+            const double change_m = sqrt(north_m * north_m + east_m * east_m);
+            if (change_m <= 5.0) {
+                if (home_stable_fix_count < 255) ++home_stable_fix_count;
+            } else {
+                home_stable_fix_count = 1;
+            }
+        }
+        previous_home_candidate_latitude = telemetry.latitude;
+        previous_home_candidate_longitude = telemetry.longitude;
+    } else {
+        home_stable_fix_count = 0;
+    }
     telemetry.payload_reset_reason = packet.reset_reason;
     telemetry.rssi = radio.getRSSI();
     telemetry.snr = radio.getSNR();
@@ -508,6 +583,10 @@ void printHelp() {
     Serial.println("  armdrop                     arm payload-owned inert drop recording");
     Serial.println("  abortdrop                   abort drop recording and command neutral");
     Serial.println("  bench <1|2> <20|40>         timed unloaded prelaunch servo test");
+    Serial.println("  retracttest                 automatic unloaded extend/retract cycle");
+    Serial.println("  canopyready                 record visual canopy readiness confirmation");
+    Serial.println("  guidedprepare <20|40|100>   prepare a staged authority profile");
+    Serial.println("  guidedarm                   confirm arming within five seconds");
     Serial.println("  tiltstart                    15 s IMU/barometer ground roll test");
     Serial.println("  tiltstop                     stop roll test and command neutral");
     Serial.println("  neutral");
@@ -602,6 +681,31 @@ void handleLine(String line) {
     } else if (line == "armdrop") {
         stopTiltHold(true);
         sendCommand(comms::LoRaRemoteCommandType::ARM_DROP_TEST);
+    } else if (line == "canopyready") {
+        stopTiltHold(true);
+        sendCommand(comms::LoRaRemoteCommandType::CONFIRM_CANOPY_READY);
+    } else if (line.startsWith("guidedprepare ")) {
+        int percent = 0;
+        if (sscanf(line.c_str(), "guidedprepare %d", &percent) != 1 ||
+            (percent != 20 && percent != 40 && percent != 100)) {
+            Serial.println("use: guidedprepare <20|40|100>");
+            return;
+        }
+        stopTiltHold(true);
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        sendCommand(comms::LoRaRemoteCommandType::PREPARE_GUIDED_DROP_TEST,
+                    static_cast<float>(percent) / 100.0f);
+    } else if (line == "guidedarm") {
+        stopTiltHold(true);
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        sendCommand(comms::LoRaRemoteCommandType::ARM_GUIDED_DROP_TEST);
+    } else if (line == "retracttest") {
+        stopTiltHold(true);
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        sendCommand(comms::LoRaRemoteCommandType::START_SERVO_RETRACT_TEST);
     } else if (line == "abortdrop") {
         manual_hold.active = false;
         manual_hold.bench_mode = false;
@@ -738,8 +842,17 @@ String statusJson() {
                 "\"angular_rate_dps\":%.1f,"
                 "\"satellites\":%u,"
                 "\"satellites_in_view\":%u,"
+                "\"home_stable_fix_count\":%u,"
                 "\"gps_valid\":%s,"
                 "\"gps_nmea_active\":%s,"
+                "\"configuration_version\":%u,"
+                "\"gps_age_ms\":%lu,"
+                "\"baro_age_ms\":%lu,"
+                "\"imu_age_ms\":%lu,"
+                "\"battery_voltage_v\":%.3f,"
+                "\"servo_rail_voltage_v\":%.3f,"
+                "\"battery_voltage_valid\":%s,"
+                "\"servo_rail_voltage_valid\":%s,"
                 "\"imu_valid\":%s,"
                 "\"baro_valid\":%s,"
                 "\"drop_test_state\":\"%s\","
@@ -768,6 +881,19 @@ String statusJson() {
                 "\"bench_servo_active\":%s,"
                 "\"payload_armed\":%s,"
                 "\"servo_healthy\":%s,"
+                "\"servo_retract_test_status\":\"%s\","
+                "\"servo_retract_test_active\":%s,"
+                "\"guided_drop_status\":\"%s\","
+                "\"guided_authority_percent\":%u,"
+                "\"guided_canopy_confirmed\":%s,"
+                "\"guided_confirmation_pending\":%s,"
+                "\"guided_physical_arm_active\":%s,"
+                "\"guided_abort_latched\":%s,"
+                "\"guided_gps_suspect\":%s,"
+                "\"guided_course_hold_active\":%s,"
+                "\"guided_oscillation_damping\":%s,"
+                "\"guided_active\":%s,"
+                "\"guided_profile_unlock_flags\":%u,"
                 "\"payload_reset_reason\":%u"
              "}"
              "}",
@@ -828,8 +954,17 @@ String statusJson() {
              telemetry.angular_rate_dps,
              telemetry.satellites,
              telemetry.satellites_in_view,
+             home_stable_fix_count,
              telemetry.gps_valid ? "true" : "false",
              telemetry.gps_nmea_active ? "true" : "false",
+             telemetry.configuration_version,
+             static_cast<unsigned long>(telemetry.gps_age_ms),
+             static_cast<unsigned long>(telemetry.baro_age_ms),
+             static_cast<unsigned long>(telemetry.imu_age_ms),
+             telemetry.battery_voltage_v,
+             telemetry.servo_rail_voltage_v,
+             telemetry.battery_voltage_valid ? "true" : "false",
+             telemetry.servo_rail_voltage_valid ? "true" : "false",
              telemetry.imu_valid ? "true" : "false",
              telemetry.baro_valid ? "true" : "false",
              phoenix::dropTestStateName(telemetry.drop_test_state),
@@ -858,6 +993,19 @@ String statusJson() {
              telemetry.bench_servo_active ? "true" : "false",
              telemetry.payload_armed ? "true" : "false",
              telemetry.servo_healthy ? "true" : "false",
+             logic::servoRetractTestStatusName(telemetry.servo_retract_test_status),
+             telemetry.servo_retract_test_active ? "true" : "false",
+             logic::guidedDropStatusName(telemetry.guided_drop_status),
+             telemetry.guided_authority_percent,
+             telemetry.guided_canopy_confirmed ? "true" : "false",
+             telemetry.guided_confirmation_pending ? "true" : "false",
+             telemetry.guided_physical_arm_active ? "true" : "false",
+             telemetry.guided_abort_latched ? "true" : "false",
+             telemetry.guided_gps_suspect ? "true" : "false",
+             telemetry.guided_course_hold_active ? "true" : "false",
+             telemetry.guided_oscillation_damping ? "true" : "false",
+             telemetry.guided_active ? "true" : "false",
+             telemetry.guided_profile_unlock_flags,
              telemetry.payload_reset_reason);
     return String(buf);
 }
@@ -885,6 +1033,31 @@ void handleCommandApi() {
         manual_hold.active = false;
         manual_hold.bench_mode = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::ABORT_DROP_TEST);
+    } else if (type == "guidedarm") {
+        stopTiltHold(true);
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        ok = sendCommand(comms::LoRaRemoteCommandType::ARM_GUIDED_DROP_TEST);
+    } else if (type == "canopyready") {
+        if (telemetry.drop_test_recording || telemetry.payload_armed) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Canopy confirmation is locked after arming\"}");
+            return;
+        }
+        ok = sendCommand(comms::LoRaRemoteCommandType::CONFIRM_CANOPY_READY);
+    } else if (type == "guidedprepare") {
+        const float authority = server.hasArg("authority")
+            ? server.arg("authority").toFloat() : 0.0f;
+        if (fabsf(authority - 0.20f) > 0.001f &&
+            fabsf(authority - 0.40f) > 0.001f &&
+            fabsf(authority - 1.00f) > 0.001f) {
+            sendJson(400, "{\"ok\":false,\"error\":\"Authority must be 20, 40, or validated full\"}");
+            return;
+        }
+        stopTiltHold(true);
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        ok = sendCommand(comms::LoRaRemoteCommandType::PREPARE_GUIDED_DROP_TEST,
+                         authority, 0.0f);
     } else if (type == "logindex") {
         ok = sendCommand(comms::LoRaRemoteCommandType::REQUEST_LOG_INDEX);
     } else if (type == "neutral") {
@@ -950,6 +1123,24 @@ void handleCommandApi() {
         manual_hold.last_repeat_ms = millis();
         ok = sendCommand(comms::LoRaRemoteCommandType::BENCH_SERVO,
                          manual_hold.servo1, manual_hold.servo2);
+    } else if (type == "retracttest") {
+        const uint32_t telemetry_age = telemetry.rx_ms == 0
+            ? UINT32_MAX : millis() - telemetry.rx_ms;
+        const bool payload_fresh = telemetry.valid && telemetry_age <= TELEMETRY_STALE_MS;
+        const bool preflight = telemetry.flight_state == logic::FlightState::BOOT ||
+            telemetry.flight_state == logic::FlightState::SELF_TEST ||
+            telemetry.flight_state == logic::FlightState::PRE_LAUNCH ||
+            telemetry.flight_state == logic::FlightState::PAD_SAFE ||
+            telemetry.flight_state == logic::FlightState::FAILSAFE_DESCENT;
+        if (!payload_fresh || !telemetry.servo_healthy || telemetry.payload_armed ||
+            telemetry.drop_test_recording || !preflight) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Automatic retraction test requires a live, healthy, unarmed preflight payload\"}");
+            return;
+        }
+        stopTiltHold(true);
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        ok = sendCommand(comms::LoRaRemoteCommandType::START_SERVO_RETRACT_TEST);
     } else if (type == "disable") {
         stopTiltHold(true);
         manual_hold.active = false;
@@ -983,6 +1174,17 @@ void handleCommandApi() {
             return;
         }
         ok = sendCommand(comms::LoRaRemoteCommandType::SET_TARGET, 0.0f, 0.0f, lat, lon);
+    } else if (type == "home") {
+        if (telemetry.drop_test_recording || telemetry.payload_armed) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Home is frozen after arming\"}");
+            return;
+        }
+        if (!telemetry.valid || !telemetry.gps_valid || home_stable_fix_count < 5) {
+            sendJson(409, "{\"ok\":false,\"error\":\"Home requires five stable payload GPS fixes\"}");
+            return;
+        }
+        ok = sendCommand(comms::LoRaRemoteCommandType::SET_TARGET, 0.0f, 0.0f,
+                         telemetry.latitude, telemetry.longitude);
     } else {
         sendJson(400, "{\"ok\":false,\"error\":\"Unknown command type\"}");
         return;
@@ -1004,12 +1206,12 @@ String htmlPage() {
 <style>
 :root{--bg:#07100f;--panel:#0c1817;--panel2:#101f1d;--line:#203a36;--text:#eef8f4;--muted:#91aaa4;--orange:#ff8b3d;--cyan:#36d4bd;--ok:#55dd91;--warn:#ffc857;--bad:#ff6b6b;--shadow:0 18px 50px #0007}
 *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;color:var(--text);font:15px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;background:radial-gradient(circle at 80% -10%,#173c35 0,transparent 32rem),linear-gradient(180deg,#091412,#050a09);min-height:100vh}
-button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px}.top{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:4px 0 18px}.brand{display:flex;align-items:center;gap:12px}.mark{width:42px;height:42px;display:grid;place-items:center;border:1px solid #ff8b3d77;background:#ff8b3d16;border-radius:12px;color:var(--orange);font-size:22px}.eyebrow{color:var(--orange);font:800 10px/1 ui-monospace,monospace;letter-spacing:.18em}.brand h1{font-size:20px;line-height:1.1;margin:5px 0 0}.topright{display:flex;align-items:center;gap:10px}.pill{border:1px solid var(--line);border-radius:999px;padding:7px 11px;font:800 11px ui-monospace,monospace;letter-spacing:.06em;background:#0a1514}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor;margin-right:7px;box-shadow:0 0 10px currentColor}.live{color:var(--ok)}.stale{color:var(--warn)}.offline{color:var(--bad)}
+button,input,select{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px}.top{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:4px 0 18px}.brand{display:flex;align-items:center;gap:12px}.mark{width:42px;height:42px;display:grid;place-items:center;border:1px solid #ff8b3d77;background:#ff8b3d16;border-radius:12px;color:var(--orange);font-size:22px}.eyebrow{color:var(--orange);font:800 10px/1 ui-monospace,monospace;letter-spacing:.18em}.brand h1{font-size:20px;line-height:1.1;margin:5px 0 0}.topright{display:flex;align-items:center;gap:10px}.pill{border:1px solid var(--line);border-radius:999px;padding:7px 11px;font:800 11px ui-monospace,monospace;letter-spacing:.06em;background:#0a1514}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor;margin-right:7px;box-shadow:0 0 10px currentColor}.live{color:var(--ok)}.stale{color:var(--warn)}.offline{color:var(--bad)}
 .mission{display:grid;grid-template-columns:1.4fr repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);margin-bottom:14px}.mission>div{background:#0b1715;padding:18px}.stateLabel,.label,h2{font:800 10px ui-monospace,monospace;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}.state{font-size:clamp(24px,4vw,40px);font-weight:900;letter-spacing:-.04em;margin-top:5px}.metric{font:800 clamp(20px,3vw,30px) ui-monospace,monospace;margin-top:7px}.unit{font-size:12px;color:var(--muted);margin-left:4px}
 .layout{display:grid;grid-template-columns:1.2fr .95fr .95fr;gap:14px}.card{background:linear-gradient(145deg,#0e1c1a,#091311);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 12px 35px #0004}.span2{grid-column:span 2}.cardHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:13px}h2{margin:0;color:#b6cbc6}.tiny{color:var(--muted);font:700 11px ui-monospace,monospace}.rows{display:grid;gap:0}.row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 0;border-top:1px solid #19302c}.row:first-child{border-top:0}.k{color:var(--muted)}.v{font:750 13px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 .health{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.sensor{padding:12px;border:1px solid var(--line);border-radius:12px;background:#07110f}.sensor b{display:block;font:800 12px ui-monospace,monospace;margin-top:5px}.sensor.good{border-color:#55dd9155}.sensor.fail{border-color:#ff6b6b55}.attitude{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.att{text-align:center;padding:12px 4px;background:#07110f;border-radius:11px}.att strong{display:block;font:800 18px ui-monospace,monospace;color:var(--cyan)}
 .servo{margin:13px 0}.servoTop{display:flex;justify-content:space-between;margin-bottom:7px}.track{height:9px;background:#07110f;border:1px solid var(--line);border-radius:99px;overflow:hidden}.fill{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--orange));transition:width .35s}.pulse{font:700 12px ui-monospace,monospace;color:var(--muted)}
-.notice{border-left:3px solid var(--warn);background:#ffc85710;padding:11px 12px;border-radius:4px 10px 10px 4px;color:#f9e6ae;font-size:12px;margin-bottom:13px}.buttonGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}button{appearance:none;border:1px solid #31514a;background:#142824;color:var(--text);border-radius:11px;padding:11px 12px;font-weight:850;cursor:pointer;transition:.15s}button:hover{transform:translateY(-1px);border-color:#52786f}button:active{transform:translateY(0)}button.primary{background:var(--orange);border-color:var(--orange);color:#1b0c03}button.neutral{background:var(--ok);border-color:var(--ok);color:#04150c}button.danger{color:#ff9a9a;border-color:#743f3f;background:#281414}button:disabled{opacity:.35;cursor:not-allowed;transform:none}.full{width:100%}.field{margin-top:10px}.field label,.slider label{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:6px}input[type=text],input[type=number]{width:100%;border:1px solid var(--line);background:#07110f;color:var(--text);border-radius:10px;padding:11px 12px;outline:none}input:focus{border-color:var(--cyan)}input[type=range]{width:100%;accent-color:var(--orange)}.slider{margin:12px 0}.status{min-height:20px;margin-top:10px;color:var(--muted);font-size:12px}.commandRow{display:flex;gap:8px;margin-top:10px}.commandRow button{flex:1}.footer{display:flex;justify-content:space-between;gap:12px;color:#637d77;font:700 10px ui-monospace,monospace;padding:14px 3px 2px}
+.notice{border-left:3px solid var(--warn);background:#ffc85710;padding:11px 12px;border-radius:4px 10px 10px 4px;color:#f9e6ae;font-size:12px;margin-bottom:13px}.buttonGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}button{appearance:none;border:1px solid #31514a;background:#142824;color:var(--text);border-radius:11px;padding:11px 12px;font-weight:850;cursor:pointer;transition:.15s}button:hover{transform:translateY(-1px);border-color:#52786f}button:active{transform:translateY(0)}button.primary{background:var(--orange);border-color:var(--orange);color:#1b0c03}button.neutral{background:var(--ok);border-color:var(--ok);color:#04150c}button.danger{color:#ff9a9a;border-color:#743f3f;background:#281414}button:disabled{opacity:.35;cursor:not-allowed;transform:none}.full{width:100%}.field{margin-top:10px}.field label,.slider label{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:6px}input[type=text],input[type=number],select{width:100%;border:1px solid var(--line);background:#07110f;color:var(--text);border-radius:10px;padding:11px 12px;outline:none}input:focus,select:focus{border-color:var(--cyan)}input[type=range]{width:100%;accent-color:var(--orange)}.slider{margin:12px 0}.status{min-height:20px;margin-top:10px;color:var(--muted);font-size:12px}.commandRow{display:flex;gap:8px;margin-top:10px}.commandRow button{flex:1}.footer{display:flex;justify-content:space-between;gap:12px;color:#637d77;font:700 10px ui-monospace,monospace;padding:14px 3px 2px}
 @media(max-width:950px){.mission{grid-template-columns:1fr 1fr}.layout{grid-template-columns:1fr 1fr}.span2{grid-column:span 2}}
 @media(max-width:620px){.shell{padding:12px}.top{align-items:flex-start}.topright .pill:first-child{display:none}.mission,.layout{grid-template-columns:1fr}.span2{grid-column:span 1}.mission>div{padding:14px}.health{grid-template-columns:1fr 1fr 1fr}.buttonGrid{grid-template-columns:1fr}.state{font-size:28px}.footer{display:block}.footer span{display:block;margin-top:4px}}
 </style>
@@ -1064,6 +1266,7 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
       <div class="cardHead"><h2>Bench Test</h2><span class="tiny">PRELAUNCH · SENSORS OPTIONAL</span></div>
       <div class="notice">Disconnect brake lines and remove all load first. These tests do not require GPS, IMU, or barometer health. They may be repeated at any uptime before launch and automatically return to neutral after each short command.</div>
       <div class="buttonGrid"><button class="benchBtn" onclick="bench(1,.20)">Servo 1 · 20%</button><button class="benchBtn" onclick="bench(1,.40)">Servo 1 · 40%</button><button class="benchBtn" onclick="bench(2,.20)">Servo 2 · 20%</button><button class="benchBtn" onclick="bench(2,.40)">Servo 2 · 40%</button></div>
+      <button id="retractTest" class="benchBtn full" onclick="automaticRetractTest()">Automatic 20% Extend + Retract Test</button>
       <div id="benchStatus" class="status">Ready for guarded bench test.</div>
     </article>
 
@@ -1081,15 +1284,21 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
 
     <article class="card">
       <div class="cardHead"><h2>Drop Test Recording</h2><span id="dropGate" class="tiny">PAYLOAD OWNED</span></div>
-      <div class="notice">Arm before release. The payload records locally and keeps servos neutral; LoRa timing is used only for supervision.</div>
+      <div class="notice">The payload owns arming and control. Guided return requires a physical arm switch, recorded canopy confirmation, stable Home fixes, an unlocked authority level, and two commands within five seconds. Flare remains disabled.</div>
       <div class="rows">
         <div class="row"><span class="k">Drop state</span><span id="dropState" class="v">--</span></div>
+        <div class="row"><span class="k">Automatic return profile</span><span id="guidedDropState" class="v">--</span></div>
+        <div class="row"><span class="k">Physical arm</span><span id="physicalArm" class="v">--</span></div>
+        <div class="row"><span class="k">Canopy observation</span><span id="canopyReady" class="v">--</span></div>
+        <div class="row"><span class="k">Authority / confirmation</span><span id="guidedAuthority" class="v">--</span></div>
         <div class="row"><span class="k">Recovery recording</span><span id="recoveryMode" class="v">AUTO READY</span></div>
         <div class="row"><span class="k">Test ID</span><span id="dropId" class="v">--</span></div>
         <div class="row"><span class="k">Payload time</span><span id="payloadTime" class="v">--</span></div>
         <div class="row"><span class="k">Event times</span><span id="dropTimes" class="v">--</span></div>
       </div>
       <div class="commandRow"><button class="primary" onclick="armDrop()">Arm Drop Test</button><button class="danger" onclick="abortDrop()">Abort And Neutral</button></div>
+      <div class="field"><label>Guided authority phase</label><select id="guidedAuthoritySelect"><option value="0.20">20 percent</option><option value="0.40">40 percent</option><option value="1.00">Validated full safe</option></select></div>
+      <div class="commandRow"><button id="canopyConfirm" onclick="confirmCanopyReady()">Record Canopy Ready</button><button id="guidedArm" class="primary" onclick="armGuidedDrop()" disabled>Prepare Automatic Return</button></div>
       <button class="full" onclick="requestLogIndex()">Request Log Index</button>
       <div id="dropStatus" class="status">Waiting for payload telemetry.</div>
     </article>
@@ -1099,6 +1308,7 @@ button,input{font:inherit}.shell{width:min(1400px,100%);margin:auto;padding:18px
       <div class="field"><label>Latitude</label><input id="lat" type="number" step="0.0000001" placeholder="37.1234567"></div>
       <div class="field"><label>Longitude</label><input id="lon" type="number" step="0.0000001" placeholder="-122.1234567"></div>
       <div class="commandRow"><button id="sendTarget" class="primary" onclick="sendTarget()">Send Target</button><button onclick="ping()">Ping</button></div>
+      <button id="captureHome" class="full" onclick="captureHome()">Capture Stable Payload Position As Home</button>
       <div id="targetStatus" class="status">Target changes are validated by the payload.</div>
     </article>
 
@@ -1135,6 +1345,8 @@ let refreshTimer=0;
 let pendingBench='';
 let pendingBenchUntil=0;
 let benchMessageUntil=0;
+let lastRetractStatus='';
+let guidedPrepareUntil=0;
 async function api(path){
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),3000);
@@ -1171,13 +1383,31 @@ function bench(n,a){
   box.textContent='Button received · transmitting Servo '+n+' at '+p+'%…';
   command('type=bench&servo='+n+'&amount='+a,'benchStatus');
 }
+function automaticRetractTest(){
+  if(dropLocked('benchStatus'))return;
+  const key='auto-retract',now=Date.now(),box=el('benchStatus');
+  if(pendingBench!==key||now>pendingBenchUntil){pendingBench=key;pendingBenchUntil=now+5000;benchMessageUntil=pendingBenchUntil;box.textContent='Safety confirmation: clear the unloaded linkage, then tap the automatic test again within 5 seconds.';return;}
+  pendingBench='';pendingBenchUntil=0;benchMessageUntil=now+6000;box.textContent='Starting payload-owned Servo 1 then Servo 2 extension/retraction cycle…';command('type=retracttest','benchStatus');
+}
 function startTilt(){if(dropLocked('tiltStatus'))return;if(confirm('Hold the payload upright and clear the servo/linkage area. Start a 15-second, 15%-maximum roll-damping test?'))command('type=tiltstart','tiltStatus')}
 function stopTilt(){command('type=tiltstop','tiltStatus')}
 function armDrop(){if(confirm('Arm payload-owned drop-test recording? Servos will stay neutral.'))command('type=armdrop','dropStatus')}
+function confirmCanopyReady(){if(confirm('Visually confirm the pre-opened steerable canopy is inflated, untangled, and clear of the release structure. Record this observation?'))command('type=canopyready','dropStatus')}
+async function armGuidedDrop(){
+  const now=Date.now(),authority=el('guidedAuthoritySelect').value;
+  if(now>guidedPrepareUntil){
+    if(!confirm('Prepare the selected calibration-locked authority phase? This does not arm until the second command.'))return;
+    if(await command('type=guidedprepare&authority='+encodeURIComponent(authority),'dropStatus')){guidedPrepareUntil=Date.now()+5000;el('guidedArm').textContent='Confirm Arm Within 5 Seconds';}
+    return;
+  }
+  guidedPrepareUntil=0;
+  if(confirm('Final confirmation: arm the automatic-return inert drop recorder now?'))command('type=guidedarm','dropStatus');
+}
 function abortDrop(){if(confirm('Abort drop recording and command neutral?'))command('type=abortdrop','dropStatus')}
 function requestLogIndex(){command('type=logindex','dropStatus')}
 function disableRemote(){ if(confirm('Disable rocket LoRa remote control until rocket reboot?')) command('type=disable') }
 function sendTarget(){if(dropLocked('targetStatus'))return;command('type=target&lat='+encodeURIComponent(el('lat').value)+'&lon='+encodeURIComponent(el('lon').value),'targetStatus')}
+function captureHome(){if(dropLocked('targetStatus'))return;command('type=home','targetStatus')}
 function updateSliders(){el('s1v').textContent=Math.round(+el('s1').value*100)+'%';el('s2v').textContent=Math.round(+el('s2').value*100)+'%'}
 el('s1').addEventListener('input',updateSliders); el('s2').addEventListener('input',updateSliders); updateSliders();
 function health(card,text,good,label){card.className='sensor '+(good?'good':'fail');text.textContent=label}
@@ -1206,6 +1436,16 @@ async function refresh(){
     el('gpsBadge').textContent=t.gps_valid?(t.satellites+' USED · FIX'):(t.gps_nmea_active?('SEARCHING · '+t.satellites_in_view+' VISIBLE'):'NO GNSS DATA');
     health(el('gpsSensor'),el('gpsText'),t.gps_valid,t.gps_valid?('FIX · '+t.satellites+' USED / '+t.satellites_in_view+' VISIBLE'):(t.gps_nmea_active?('CONNECTED · '+t.satellites_in_view+' VISIBLE'):'NO DATA'));if(!t.gps_valid&&t.gps_nmea_active)el('gpsSensor').className='sensor';health(el('imuSensor'),el('imuText'),t.imu_valid,t.imu_valid?'HEALTHY':'ERROR');health(el('baroSensor'),el('baroText'),t.baro_valid,t.baro_valid?'HEALTHY':'ERROR');
     el('dropState').textContent=t.drop_test_state;el('dropId').textContent=t.drop_test_id?('#'+t.drop_test_id):'--';
+    el('guidedDropState').textContent=t.guided_drop_status;
+    el('physicalArm').textContent=t.guided_physical_arm_active?'ACTIVE':'NOT ACTIVE';el('physicalArm').className='v '+(t.guided_physical_arm_active?'ok':'bad');
+    el('canopyReady').textContent=t.guided_canopy_confirmed?'RECORDED':'NOT CONFIRMED';el('canopyReady').className='v '+(t.guided_canopy_confirmed?'ok':'warn');
+    el('guidedAuthority').textContent=t.guided_authority_percent+'% · '+(t.guided_confirmation_pending?'CONFIRM NOW':'NOT PREPARED');
+    const guidedAvailable=(t.guided_profile_unlock_flags&3)===3;
+    const guidedReady=guidedAvailable&&t.guided_physical_arm_active&&t.guided_canopy_confirmed&&t.gps_valid&&t.imu_valid&&t.baro_valid&&t.servo_healthy&&!dropRecordingActive;
+    el('guidedArm').disabled=!guidedReady;
+    if(!guidedAvailable)el('guidedArm').textContent='Automatic Return Locked · Calibration Required';
+    else if(Date.now()>guidedPrepareUntil)el('guidedArm').textContent='Prepare Automatic Return';
+    el('canopyConfirm').disabled=dropRecordingActive||!t.fresh;
     const launchRecovery=['ASCENT','APOGEE_DETECT','APOGEE_CONFIRMED','DEPLOYMENT_WAIT','PARAFOIL_STABILIZATION','GUIDED_DESCENT','FINAL_APPROACH','FLARE'].includes(t.flight_state);
     el('recoveryMode').textContent=t.drop_test_recording?'INERT DROP · LOCAL LOG':(launchRecovery?'LAUNCH RECOVERY · AUTO LOG':'AUTO LAUNCH READY');
     el('payloadTime').textContent=t.payload_time_ms?(t.payload_time_ms+' ms onboard'):'--';
@@ -1230,7 +1470,9 @@ async function refresh(){
     else el('tiltStatus').textContent=tiltReady?'Hold upright, then start the timed test.':'Requires live payload, preflight state, healthy IMU and barometer.';
     const benchReady=t.fresh&&t.servo_healthy&&!t.payload_armed&&!dropRecordingActive&&['BOOT','SELF_TEST','PRE_LAUNCH','PAD_SAFE','FAILSAFE_DESCENT'].includes(t.flight_state);
     document.querySelectorAll('.benchBtn').forEach(b=>b.disabled=!benchReady);
-    if(t.bench_servo_active){benchMessageUntil=Date.now()+1500;el('benchStatus').textContent='PAYLOAD CONFIRMED · command active · Servo 1 '+Math.round(t.servo1_cmd*100)+'% · Servo 2 '+Math.round(t.servo2_cmd*100)+'%';}
+    if(t.servo_retract_test_active){benchMessageUntil=Date.now()+1500;el('benchStatus').textContent='AUTOMATIC TEST · '+t.servo_retract_test_status+' · Servo 1 '+Math.round(t.servo1_cmd*100)+'% · Servo 2 '+Math.round(t.servo2_cmd*100)+'%';}
+    else if(t.servo_retract_test_status==='COMPLETE'&&lastRetractStatus!=='COMPLETE'){benchMessageUntil=Date.now()+3000;el('benchStatus').textContent='Automatic extension/retraction sequence complete · both commands neutral.';}
+    else if(t.bench_servo_active){benchMessageUntil=Date.now()+1500;el('benchStatus').textContent='PAYLOAD CONFIRMED · command active · Servo 1 '+Math.round(t.servo1_cmd*100)+'% · Servo 2 '+Math.round(t.servo2_cmd*100)+'%';}
     else if(Date.now()>=benchMessageUntil){
       if(!t.fresh)el('benchStatus').textContent='Locked: payload telemetry is not live.';
       else if(!t.servo_healthy)el('benchStatus').textContent='Locked: payload reports servo controller unavailable.';
@@ -1238,7 +1480,8 @@ async function refresh(){
       else if(!benchReady)el('benchStatus').textContent='Locked in flight state '+t.flight_state+'.';
       else el('benchStatus').textContent='Ready · payload accepted '+t.remote_accepted_count+' / rejected '+t.remote_rejected_count+' commands.';
     }
-    const steer=(t.flight_state==='GUIDED_DESCENT'||t.flight_state==='FINAL_APPROACH')&&!dropRecordingActive;el('sendSteer').disabled=!steer;el('sendTarget').disabled=dropRecordingActive;el('steerGate').textContent=dropRecordingActive?'LOCKED · DROP RECORDING':(steer?'UNLOCKED FOR DESCENT':'LOCKED · '+t.flight_state);el('steerGate').className='tiny '+(steer?'ok':'warn');
+    lastRetractStatus=t.servo_retract_test_status;
+    const steer=(t.flight_state==='GUIDED_DESCENT'||t.flight_state==='FINAL_APPROACH')&&!dropRecordingActive;el('sendSteer').disabled=!steer;el('sendTarget').disabled=dropRecordingActive;el('captureHome').disabled=dropRecordingActive||!t.gps_valid||t.home_stable_fix_count<5;el('targetStatus').dataset.ready=t.home_stable_fix_count;el('steerGate').textContent=dropRecordingActive?'LOCKED · DROP RECORDING':(steer?'UNLOCKED FOR DESCENT':'LOCKED · '+t.flight_state);el('steerGate').className='tiny '+(steer?'ok':'warn');
     el('wifi').textContent=s.wifi_ok?s.ip:'OFF';el('clients').textContent=s.clients;el('radio').textContent=s.radio_ok?'RADIO READY':'RADIO ERROR';el('radio').className='tiny '+(s.radio_ok?'ok':'bad');
     el('signal').textContent=t.valid?(t.rssi+' dBm / '+num(t.snr)+' dB'):'--';el('counts').textContent=s.sent_count+' / '+s.failed_count;el('lastcmd').textContent=s.last_command;el('footerStatus').textContent=s.last_error?('ERROR · '+s.last_error):'LOCAL SYSTEM NOMINAL';
   }catch(e){

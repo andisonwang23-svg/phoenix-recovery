@@ -19,7 +19,7 @@ namespace telemetry {
 struct TelemetryPacketV1 {
     // Header
     uint8_t  magic[2] = {0x50, 0x52};  // 'P','R' - Phoenix Recovery
-    uint8_t  version = 7;
+    uint8_t  version = 8;
     uint8_t  sequence = 0;
 
     // Timestamp
@@ -40,7 +40,20 @@ struct TelemetryPacketV1 {
     uint8_t  satellites = 0;
     uint8_t  satellites_in_view = 0;
     uint8_t  gps_valid = 0;
-    uint8_t  gnss_diagnostic_reserved = 0;
+    // Low nibble: ServoRetractTestStatus. High nibble: GuidedDropStatus.
+    uint8_t  service_test_status = 0;
+
+    // Configuration/readiness evidence added in wire format v8.
+    uint16_t configuration_version = 0;
+    uint16_t gps_age_100ms = 0;
+    uint16_t baro_age_100ms = 0;
+    uint16_t imu_age_100ms = 0;
+    uint16_t battery_mv = 0;
+    uint16_t servo_rail_mv = 0;
+    uint8_t  power_valid_flags = 0; // bit0 battery, bit1 servo rail
+    uint8_t  guided_authority_percent = 0;
+    uint8_t  guided_flags = 0; // canopy, confirm, physical arm, abort, GPS suspect, course hold, damping, active
+    uint8_t  guided_profile_unlock_flags = 0; // feature/calibration/20/40/full
 
     // Altitude / vertical
     int16_t  altitude_agl_m = 0;       // meters * 10
@@ -102,7 +115,7 @@ struct TelemetryPacketV1 {
     uint16_t remote_rejected_count = 0;
     uint8_t  remote_status_flags = 0; // bit0 enabled, bit1 link, bit2 allowed,
                                      // bit3 manual, bit4 bench, bit5 armed,
-                                     // bit6 servo healthy
+                                     // bit6 servo healthy, bit7 retract test active
     uint8_t  reset_reason = 0;
 
     // CRC (CCITT-16)

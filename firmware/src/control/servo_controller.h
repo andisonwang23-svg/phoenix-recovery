@@ -46,6 +46,11 @@ public:
     // Set physical brake-line commands. Persisted channel-role mapping routes
     // these to Servo 1 and Servo 2 without assuming their installed sides.
     void setBrakeCommands(float left_cmd, float right_cmd);
+    // Guided inert-drop path. The caller supplies the already unlocked staged
+    // authority (20%, 40%, or the measured full-safe value). This path is
+    // separate from normal launch guidance and from unrestricted bench tests.
+    void setGuidedDropBrakeCommands(float left_cmd, float right_cmd,
+                                    float authority_limit);
     void setServoCommands(float servo1_cmd, float servo2_cmd);
     void setBenchServoCommands(float servo1_cmd, float servo2_cmd);
 
@@ -119,6 +124,8 @@ private:
     float usToCommand(float us, const Calibration& cal);
     float usToAngleDeg(float us, const Calibration& cal) const;
     float usToTurnDeg(float us, const Calibration& cal) const;
+    void setServoCommandsWithLimit(float servo1_cmd, float servo2_cmd,
+                                   float command_limit);
     void applySlewLimit(float& current, float target, float max_rate_us_per_s, float dt_s);
 };
 

@@ -8,6 +8,9 @@
 #include "logic/state_machine.h"
 #include "logic/drop_test_controller.h"
 #include "logic/tilt_stabilizer.h"
+#include "logic/servo_retract_test.h"
+#include "logic/guided_drop_controller.h"
+#include "logic/guided_drop_arm_gate.h"
 
 namespace phoenix {
 
@@ -127,6 +130,29 @@ struct VehicleState {
     float tilt_reference_roll_deg = 0.0f;
     float tilt_roll_error_deg = 0.0f;
     float tilt_control_command = 0.0f;
+
+    // Unloaded automatic extension/retraction service test. This is a
+    // preflight bench function, not a recovery flight mode.
+    logic::ServoRetractTestStatus servo_retract_test_status =
+        logic::ServoRetractTestStatus::IDLE;
+    bool servo_retract_test_active = false;
+
+    // Explicitly armed, calibration-locked return-to-target drop profile.
+    logic::GuidedDropStatus guided_drop_status = logic::GuidedDropStatus::FEATURE_DISABLED;
+    logic::GuidedArmStatus guided_arm_status = logic::GuidedArmStatus::IDLE;
+    logic::GuidedAuthorityLevel guided_authority =
+        logic::GuidedAuthorityLevel::NEUTRAL;
+    bool guided_drop_requested = false;
+    bool guided_drop_active = false;
+    bool guided_canopy_confirmed = false;
+    bool guided_confirmation_pending = false;
+    bool guided_physical_arm_active = false;
+    bool guided_abort_latched = false;
+    bool guided_gps_suspect = false;
+    bool guided_course_hold_active = false;
+    bool guided_oscillation_damping = false;
+    float guided_authority_limit = 0.0f;
+    uint8_t guided_profile_unlock_flags = 0;
 
     // Debug / event log indices
     uint16_t event_log_head = 0;

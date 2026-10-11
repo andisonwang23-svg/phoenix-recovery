@@ -133,18 +133,29 @@ void ServoController::setBrakeCommands(float left_cmd, float right_cmd) {
 }
 
 void ServoController::setServoCommands(float left_cmd, float right_cmd) {
+    setServoCommandsWithLimit(left_cmd, right_cmd, cfg::MAX_STEERING_COMMAND);
+}
+
+void ServoController::setGuidedDropBrakeCommands(float left_cmd, float right_cmd,
+                                                  float authority_limit) {
+    authority_limit = constrain(authority_limit, 0.0f,
+                                cfg::GUIDED_DROP_MAX_STEERING);
+    if (servo1_controls_left_brake_) {
+        setServoCommandsWithLimit(left_cmd, right_cmd, authority_limit);
+    } else {
+        setServoCommandsWithLimit(right_cmd, left_cmd, authority_limit);
+    }
+}
+
+void ServoController::setServoCommandsWithLimit(float left_cmd, float right_cmd,
+                                                 float command_limit) {
     if (!initialized_) return;
 
-    // Clamp commands
-    left_cmd = constrain(left_cmd, -1.0f, 1.0f);
-    right_cmd = constrain(right_cmd, -1.0f, 1.0f);
+    command_limit = constrain(command_limit, 0.0f, 1.0f);
+    left_cmd = constrain(left_cmd, -command_limit, command_limit);
+    right_cmd = constrain(right_cmd, -command_limit, command_limit);
     if (fabsf(left_cmd) < 0.005f) left_cmd = 0.0f;
     if (fabsf(right_cmd) < 0.005f) right_cmd = 0.0f;
-
-    // Apply MAX_STEERING_COMMAND limit (from config)
-    float max_cmd = cfg::MAX_STEERING_COMMAND;
-    left_cmd = constrain(left_cmd, -max_cmd, max_cmd);
-    right_cmd = constrain(right_cmd, -max_cmd, max_cmd);
 
     left_cmd_ = left_cmd;
     right_cmd_ = right_cmd;

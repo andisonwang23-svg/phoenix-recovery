@@ -70,19 +70,26 @@ DropTestOutput DropTestController::step(const DropTestInput& input) {
     if (output_.state == DropTestState::ARMED_RECORDING ||
         output_.state == DropTestState::RELEASE_CANDIDATE) {
         const float altitude_loss_m = arm_altitude_m_ - input.altitude_agl_m;
-        const bool release_candidate = input.barometer_valid &&
+        const bool imu_release_candidate = input.imu_valid &&
+            std::isfinite(input.vertical_accel_mps2) &&
+            std::fabs(input.vertical_accel_mps2) >= config_.release_imu_accel_mps2;
+        const bool baro_release_confirmation = input.barometer_valid &&
             std::isfinite(input.altitude_agl_m) &&
             std::isfinite(input.vertical_speed_mps) &&
             input.vertical_speed_mps <= config_.release_speed_mps &&
             altitude_loss_m >= config_.release_altitude_loss_m;
 
-        if (release_candidate) {
+        if (output_.state == DropTestState::ARMED_RECORDING &&
+            imu_release_candidate) {
             if (release_candidate_since_ms_ == 0) {
                 release_candidate_since_ms_ = input.now_ms;
                 output_.release_onset_ms = input.now_ms;
                 output_.state = DropTestState::RELEASE_CANDIDATE;
                 output_.events |= DROP_EVENT_RELEASE_ONSET;
             }
+        }
+        if (output_.state == DropTestState::RELEASE_CANDIDATE &&
+            baro_release_confirmation) {
             if (elapsed(input.now_ms, release_candidate_since_ms_, config_.release_confirm_ms)) {
                 output_.state = DropTestState::DROP_CONFIRMED;
                 output_.release_confirm_ms = input.now_ms;
@@ -90,7 +97,9 @@ DropTestOutput DropTestController::step(const DropTestInput& input) {
                 resetStableWindow(input);
                 output_.events |= DROP_EVENT_RELEASE_CONFIRMED;
             }
-        } else if (release_candidate_since_ms_ != 0) {
+        } else if (output_.state == DropTestState::RELEASE_CANDIDATE &&
+                   elapsed(input.now_ms, release_candidate_since_ms_,
+                           config_.release_candidate_timeout_ms)) {
             release_candidate_since_ms_ = 0;
             output_.release_onset_ms = 0;
             output_.state = DropTestState::ARMED_RECORDING;

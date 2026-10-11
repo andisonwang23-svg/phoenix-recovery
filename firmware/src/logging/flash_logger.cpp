@@ -23,15 +23,6 @@ bool FlashLogger::begin(const FlashLoggerConfig& config) {
     }
 
     initialized_ = true;
-    // Do not silently overwrite flight_0.log after every reboot. Select the
-    // first unused slot; retention/archival can be handled after recovery.
-    for (uint16_t candidate = 0; candidate < 255; ++candidate) {
-        String filename = "/flight_" + String(candidate) + ".log";
-        if (!SPIFFS.exists(filename.c_str())) {
-            current_flight_.flight_number = static_cast<uint8_t>(candidate);
-            break;
-        }
-    }
     Serial.println("[FlashLogger] Initialized successfully");
     return true;
 }
@@ -42,7 +33,26 @@ bool FlashLogger::startFlightLog() {
     logging_active_ = false;
     write_fault_reported_ = false;
 
-    // Create new flight log file
+    // Select an unused slot every time. A boot log may be closed immediately
+    // before a separately identified drop log is opened, and a missing file in
+    // the middle of the sequence must never cause the next file to overwrite a
+    // later retained run.
+    bool slot_found = false;
+    for (uint16_t candidate = 0; candidate < 255; ++candidate) {
+        const String candidate_name = "/flight_" + String(candidate) + ".log";
+        if (!SPIFFS.exists(candidate_name.c_str())) {
+            current_flight_.flight_number = static_cast<uint8_t>(candidate);
+            slot_found = true;
+            break;
+        }
+    }
+    if (!slot_found) {
+        Serial.println("[FlashLogger] No unused flight log slot; refusing to overwrite evidence");
+        write_fault_reported_ = true;
+        return false;
+    }
+
+    // Create new flight log file.
     String filename = "/flight_" + String(current_flight_.flight_number) + ".log";
     File file = SPIFFS.open(filename.c_str(), FILE_WRITE);
     if (!file) {
@@ -52,7 +62,7 @@ bool FlashLogger::startFlightLog() {
 
     // Initialize flight header
     memcpy(current_flight_.magic, "PRFL", 4);
-    current_flight_.version = 2;
+    current_flight_.version = 3;
     current_flight_.start_time_ms = millis();
     current_flight_.end_time_ms = 0;
     current_flight_.entry_count = 0;
@@ -107,8 +117,6 @@ bool FlashLogger::endFlightLog() {
     file.close();
 
     logging_active_ = false;
-    current_flight_.flight_number++;
-
     Serial.printf("[FlashLogger] Ended flight log, %d entries, %d bytes\n",
                   entry_count_, data_size_);
     return true;
@@ -174,65 +182,11 @@ bool FlashLogger::logFlightState(const VehicleState& state) {
 }
 
 bool FlashLogger::logTelemetry(const VehicleState& state) {
-    // One synchronized, replayable snapshot. Requested commands are retained
-    // separately from actual outputs so a stalled/saturated actuator is visible.
-    struct TelemetryData {
-        uint8_t schema_version;
-        uint8_t drop_test_state;
-        uint16_t drop_test_id;
-        uint32_t sample_timestamp_ms;
-        uint32_t configuration_version;
-        uint8_t flight_state;
-        uint8_t guidance_mode;
-        uint8_t failure_code;
-        uint8_t validity_bits;
-        uint32_t gps_age_ms;
-        uint32_t baro_age_ms;
-        uint32_t imu_age_ms;
-        uint32_t gps_last_update_ms;
-        uint32_t baro_last_update_ms;
-        uint32_t imu_last_update_ms;
-        double latitude;
-        double longitude;
-        float gps_altitude;
-        float hdop;
-        uint8_t satellites;
-        float altitude_agl;
-        float barometric_altitude;
-        float barometric_pressure_hpa;
-        float barometric_temperature_c;
-        float vertical_speed;
-        float vertical_accel;
-        float ground_speed;
-        float gps_course;
-        float target_bearing;
-        float heading_error;
-        float distance_to_target;
-        float roll;
-        float pitch;
-        float yaw;
-        float angular_rate;
-        float gyro_x;
-        float gyro_y;
-        float gyro_z;
-        float requested_left;
-        float requested_right;
-        float actual_left;
-        float actual_right;
-        float actual_left_us;
-        float actual_right_us;
-        float battery_voltage;
-        float servo_rail_voltage;
-        uint32_t drop_release_ms;
-        uint32_t canopy_signature_ms;
-        uint32_t stable_descent_ms;
-        uint32_t landing_confirm_ms;
-    } data;
-
-    static_assert(sizeof(TelemetryData) <= sizeof(LogEntry::data),
-                  "Telemetry log record exceeds FlashLogger entry size");
-    data.schema_version = 2;
+    TelemetryRecordV3 data{};
+    data.schema_version = 3;
     data.drop_test_state = static_cast<uint8_t>(state.drop_test_state);
+    data.guided_drop_status = static_cast<uint8_t>(state.guided_drop_status);
+    data.guided_authority = static_cast<uint8_t>(state.guided_authority);
     data.drop_test_id = state.drop_test_id;
     data.sample_timestamp_ms = state.timestamp_ms;
     data.configuration_version = state.configuration_version;
@@ -248,11 +202,17 @@ bool FlashLogger::logTelemetry(const VehicleState& state) {
     data.gps_age_ms = state.gps_age_ms;
     data.baro_age_ms = state.baro_age_ms;
     data.imu_age_ms = state.imu_age_ms;
-    data.gps_last_update_ms = state.gps_last_update_ms;
-    data.baro_last_update_ms = state.baro_last_update_ms;
-    data.imu_last_update_ms = state.imu_last_update_ms;
+    data.control_flags = (state.guided_drop_active ? 1U : 0U) |
+                         (state.guided_gps_suspect ? 2U : 0U) |
+                         (state.guided_course_hold_active ? 4U : 0U) |
+                         (state.guided_oscillation_damping ? 8U : 0U) |
+                         (state.guided_abort_latched ? 16U : 0U) |
+                         (state.drop_test_neutral_lock ? 32U : 0U);
+    data.reset_reason = state.reset_reason;
     data.latitude = state.latitude;
     data.longitude = state.longitude;
+    data.target_latitude = state.target_latitude;
+    data.target_longitude = state.target_longitude;
     data.gps_altitude = state.gps_altitude_m;
     data.hdop = state.hdop;
     data.satellites = static_cast<uint8_t>(state.satellite_count < 0 ? 0 :
@@ -291,6 +251,12 @@ bool FlashLogger::logTelemetry(const VehicleState& state) {
     return log(LogEntryType::TELEMETRY, reinterpret_cast<const uint8_t*>(&data), sizeof(data));
 }
 
+bool FlashLogger::logConfigurationSnapshot(
+    const ConfigurationSnapshotV1& snapshot) {
+    return log(LogEntryType::CONFIG_SNAPSHOT,
+               reinterpret_cast<const uint8_t*>(&snapshot), sizeof(snapshot));
+}
+
 bool FlashLogger::logEvent(const char* message) {
     uint16_t len = strlen(message);
     if (len > sizeof(LogEntry::data) - 1) {
@@ -310,7 +276,8 @@ bool FlashLogger::logError(const char* error_msg) {
 bool FlashLogger::readEntry(uint32_t index, LogEntry& entry) {
     if (!initialized_) return false;
 
-    String filename = "/flight_" + String(current_flight_.flight_number) + ".log";
+    const uint8_t flight_number = current_flight_.flight_number;
+    String filename = "/flight_" + String(flight_number) + ".log";
     File file = SPIFFS.open(filename.c_str(), FILE_READ);
     if (!file) {
         return false;

@@ -19,8 +19,93 @@ enum class LogEntryType : uint8_t {
     SERVO_COMMAND = 4,
     EVENT = 5,
     ERROR = 6,
-    BOOT = 7
+    BOOT = 7,
+    CONFIG_SNAPSHOT = 8
 };
+
+#pragma pack(push, 1)
+// Stable, host-decodable schema used by log version 3. Do not rely on compiler
+// padding when logs must be replayed on a different computer.
+struct TelemetryRecordV3 {
+    uint8_t schema_version;
+    uint8_t drop_test_state;
+    uint8_t guided_drop_status;
+    uint8_t guided_authority;
+    uint8_t flight_state;
+    uint8_t guidance_mode;
+    uint8_t failure_code;
+    uint8_t validity_bits;
+    uint8_t control_flags;
+    uint8_t satellites;
+    uint8_t reset_reason;
+    uint8_t reserved;
+    uint16_t drop_test_id;
+    uint32_t sample_timestamp_ms;
+    uint32_t configuration_version;
+    uint32_t gps_age_ms;
+    uint32_t baro_age_ms;
+    uint32_t imu_age_ms;
+    double latitude;
+    double longitude;
+    double target_latitude;
+    double target_longitude;
+    float gps_altitude;
+    float hdop;
+    float altitude_agl;
+    float barometric_altitude;
+    float barometric_pressure_hpa;
+    float barometric_temperature_c;
+    float vertical_speed;
+    float vertical_accel;
+    float ground_speed;
+    float gps_course;
+    float target_bearing;
+    float heading_error;
+    float distance_to_target;
+    float roll;
+    float pitch;
+    float yaw;
+    float angular_rate;
+    float gyro_x;
+    float gyro_y;
+    float gyro_z;
+    float requested_left;
+    float requested_right;
+    float actual_left;
+    float actual_right;
+    float actual_left_us;
+    float actual_right_us;
+    float battery_voltage;
+    float servo_rail_voltage;
+    uint32_t drop_release_ms;
+    uint32_t canopy_signature_ms;
+    uint32_t stable_descent_ms;
+    uint32_t landing_confirm_ms;
+};
+
+struct ConfigurationSnapshotV1 {
+    uint8_t schema_version;
+    uint8_t guided_authority;
+    uint8_t flare_enabled;
+    uint8_t servo1_controls_left_brake;
+    uint32_t configuration_version;
+    double target_latitude;
+    double target_longitude;
+    float servo1_neutral_us;
+    float servo1_min_us;
+    float servo1_max_us;
+    float servo1_max_brake_us;
+    float servo2_neutral_us;
+    float servo2_min_us;
+    float servo2_max_us;
+    float servo2_max_brake_us;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(TelemetryRecordV3) == 194,
+              "TelemetryRecordV3 changed; update tools/export_drop_log.py");
+static_assert(sizeof(ConfigurationSnapshotV1) == 56,
+              "ConfigurationSnapshotV1 changed; update tools/export_drop_log.py");
 
 // Flight log entry header
 struct LogEntryHeader {
@@ -48,6 +133,9 @@ struct FlightLogHeader {
     uint32_t data_size;
     uint16_t crc;
 };
+
+static_assert(sizeof(FlightLogHeader) == 28,
+              "FlightLogHeader changed; update tools/export_drop_log.py");
 
 // Flash logger configuration
 struct FlashLoggerConfig {
@@ -81,6 +169,8 @@ public:
 
     // Log telemetry snapshot
     bool logTelemetry(const VehicleState& state);
+
+    bool logConfigurationSnapshot(const ConfigurationSnapshotV1& snapshot);
 
     // Log event with message
     bool logEvent(const char* message);

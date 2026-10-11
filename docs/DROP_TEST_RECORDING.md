@@ -53,3 +53,8 @@ progressive validation gates.
 Normal launch recovery remains separate and automatic. See
 `docs/LAUNCH_AND_BENCH_RECOVERY_MODE.md` for the launch sequence and the guarded
 20%/40% sensor-independent servo-test procedure.
+
+The separate calibration-locked automatic-return profile and the new automatic
+Servo 1/Servo 2 extension-and-return-to-neutral bench sequence are documented
+in `docs/GUIDED_DROP_RECOVERY_TEST.md`. The original **Arm Drop Test** button
+remains neutral-only; adding the guided profile did not weaken that baseline.

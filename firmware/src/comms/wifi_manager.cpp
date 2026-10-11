@@ -3,6 +3,7 @@
 // ============================================================================
 #include "wifi_manager.h"
 #include <Preferences.h>
+#include <SPIFFS.h>
 
 namespace comms {
 
@@ -169,6 +170,18 @@ void WiFiManager::setupRoutes() {
 
     server_->on("/api/readiness", HTTP_GET, [this](AsyncWebServerRequest* request) {
         request->send(200, "application/json", getReadinessJSON());
+    });
+
+    server_->on("/recovery", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        request->send(200, "text/html", generateRecoveryHTML());
+    });
+
+    server_->on("/api/logs", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        request->send(200, "application/json", getLogIndexJSON());
+    });
+
+    server_->on("/api/log/download", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        handleLogDownload(request);
     });
 
     server_->on("/api/config", HTTP_POST, [this](AsyncWebServerRequest* request) {
@@ -686,6 +699,75 @@ void WiFiManager::handleServoResponse(AsyncWebServerRequest* request) {
 // ============================================================================
 // HTML PAGE GENERATION
 // ============================================================================
+
+bool WiFiManager::validLogName(const String& name) {
+    if (!name.startsWith("flight_") || !name.endsWith(".log")) return false;
+    if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 ||
+        name.indexOf("..") >= 0) return false;
+    const int number_end = name.length() - 4;
+    if (number_end <= 7) return false;
+    for (int i = 7; i < number_end; ++i) {
+        if (!isDigit(name.charAt(i))) return false;
+    }
+    return true;
+}
+
+String WiFiManager::getLogIndexJSON() {
+    String json = "{\"logs\":[";
+    bool first = true;
+    File root = SPIFFS.open("/");
+    File file = root.openNextFile();
+    while (file) {
+        String path = file.name();
+        String name = path.startsWith("/") ? path.substring(1) : path;
+        if (validLogName(name)) {
+            uint32_t crc = 0xFFFFFFFFU;
+            while (file.available()) {
+                const uint8_t value = static_cast<uint8_t>(file.read());
+                crc ^= value;
+                for (uint8_t bit = 0; bit < 8; ++bit) {
+                    crc = (crc & 1U) ? (crc >> 1U) ^ 0xEDB88320U
+                                     : (crc >> 1U);
+                }
+            }
+            crc ^= 0xFFFFFFFFU;
+            if (!first) json += ',';
+            first = false;
+            char crc_text[9];
+            snprintf(crc_text, sizeof(crc_text), "%08lX",
+                     static_cast<unsigned long>(crc));
+            json += "{\"name\":\"" + name + "\",\"size\":" +
+                String(file.size()) + ",\"crc32\":\"" + crc_text + "\"}";
+        }
+        file.close();
+        file = root.openNextFile();
+    }
+    root.close();
+    json += "],\"complete\":true}";
+    return json;
+}
+
+void WiFiManager::handleLogDownload(AsyncWebServerRequest* request) {
+    if (!request->hasParam("name")) {
+        request->send(400, "application/json", "{\"error\":\"Missing log name\"}");
+        return;
+    }
+    const String name = request->getParam("name")->value();
+    if (!validLogName(name)) {
+        request->send(400, "application/json", "{\"error\":\"Invalid log name\"}");
+        return;
+    }
+    const String path = "/" + name;
+    if (!SPIFFS.exists(path)) {
+        request->send(404, "application/json", "{\"error\":\"Log not found\"}");
+        return;
+    }
+    request->send(SPIFFS, path, "application/octet-stream", true);
+}
+
+String WiFiManager::generateRecoveryHTML() {
+    return R"HTML(<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PHOENIX Recovery Logs</title><style>body{max-width:760px;margin:40px auto;padding:0 18px;background:#07100f;color:#eef8f4;font:16px system-ui}h1{font-size:28px}p{color:#a9c1bb}.log{border:1px solid #28463f;border-radius:12px;padding:14px;margin:10px 0;background:#0e1c1a}.meta{font:13px ui-monospace,monospace;color:#91aaa4}a{display:inline-block;margin-top:8px;color:#07100f;background:#55dd91;padding:9px 12px;border-radius:9px;text-decoration:none;font-weight:800}.bad{color:#ff8080}</style></head><body><h1>PHOENIX Recovery Logs</h1><p>Post-landing payload service. Download the raw log, verify its CRC32 from this index, then run the host export tool to create CSV, replay, event, configuration, and chart files.</p><div id="logs">Loading…</div><script>fetch('/api/logs',{cache:'no-store'}).then(r=>r.json()).then(d=>{logs.innerHTML=d.logs.length?d.logs.map(x=>`<div class="log"><b>${x.name}</b><div class="meta">${x.size} bytes · CRC32 ${x.crc32}</div><a href="/api/log/download?name=${encodeURIComponent(x.name)}">Download raw log</a></div>`).join(''):'No completed logs found.'}).catch(e=>logs.innerHTML='<span class="bad">'+e.message+'</span>')</script></body></html>)HTML";
+}
 
 String WiFiManager::generateDashboardHTML() {
     return R"HTML(

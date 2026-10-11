@@ -78,6 +78,7 @@ class FlightCoordinator {
 public:
     explicit FlightCoordinator(const CoordinatorConfig& config = CoordinatorConfig());
     void reset(uint32_t now_ms = 0);
+    void forceFailsafe(FailCode failure, uint32_t now_ms);
     CoordinatorOutput step(const CoordinatorInput& input);
     const TransitionTimestamps& timestamps() const { return timestamps_; }
     FlightState state() const { return state_; }
