@@ -14,7 +14,9 @@
 
 #include <Arduino.h>
 #include <DNSServer.h>
+#include <FS.h>
 #include <RadioLib.h>
+#include <SPIFFS.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <cmath>
@@ -23,6 +25,7 @@
 
 #include "config.h"
 #include "comms/lora_remote_protocol.h"
+#include "logic/drop_log_session.h"
 #include "telemetry/telemetry_packet.h"
 #include "logic/state_machine.h"
 
@@ -53,6 +56,7 @@ constexpr uint32_t MANUAL_HOLD_MS = 1500;
 constexpr uint32_t BENCH_HOLD_MS = 2000;
 constexpr uint32_t TILT_TEST_HOLD_MS = 15000;
 constexpr float GROUND_MAX_MANUAL_BRAKE = cfg::LORA_REMOTE_MAX_BRAKE_COMMAND;
+constexpr size_t GROUND_DROP_LOG_MAX_BYTES = 1024U * 1024U;
 
 static Module lora_module(
     cfg::PIN_LORA_NSS,
@@ -204,7 +208,7 @@ struct TelemetrySnapshot {
     logic::GuidedDropStatus guided_drop_status =
         logic::GuidedDropStatus::FEATURE_DISABLED;
     uint8_t guided_authority_percent = 0;
-    bool guided_canopy_confirmed = false;
+    bool guided_canopy_detected = false;
     bool guided_confirmation_pending = false;
     bool guided_physical_arm_active = false;
     bool guided_abort_latched = false;
@@ -219,6 +223,190 @@ struct TelemetrySnapshot {
 };
 
 static TelemetrySnapshot telemetry;
+
+static logic::DropLogSession drop_log_session;
+static bool drop_log_storage_ok = false;
+static bool drop_log_active = false;
+static String drop_log_filename;
+static String drop_log_last_close_reason = "NONE";
+static String drop_log_last_error;
+static uint32_t drop_log_rows = 0;
+static uint32_t drop_log_write_errors = 0;
+
+bool isDropLogFilename(const String& filename) {
+    String name = filename;
+    if (name.startsWith("/")) name.remove(0, 1);
+    return name.startsWith("drop_") && name.endsWith(".csv") &&
+           name.indexOf("..") < 0 && name.indexOf('/') < 0;
+}
+
+String dropLogPath(const String& filename) {
+    return filename.startsWith("/") ? filename : String("/") + filename;
+}
+
+void recordDropLogWriteError(const String& message) {
+    drop_log_write_errors++;
+    drop_log_last_error = message;
+    Serial.println("Ground drop log: " + message);
+}
+
+bool startGroundDropLog(uint16_t test_id) {
+    if (!drop_log_storage_ok) {
+        recordDropLogWriteError("storage is unavailable");
+        return false;
+    }
+
+    String path;
+    for (uint16_t slot = 1; slot < 10000; ++slot) {
+        char candidate[48];
+        snprintf(candidate, sizeof(candidate), "/drop_%04u_id_%05u.csv",
+                 slot, test_id);
+        if (!SPIFFS.exists(candidate)) {
+            path = candidate;
+            break;
+        }
+    }
+    if (path.isEmpty()) {
+        recordDropLogWriteError("no unused filename remains");
+        return false;
+    }
+
+    File file = SPIFFS.open(path, FILE_WRITE);
+    if (!file) {
+        recordDropLogWriteError("could not create " + path);
+        return false;
+    }
+    file.println("record_type,ground_rx_ms,payload_time_ms,packet_sequence,drop_test_id,drop_test_state,drop_test_recording,flight_state,guidance_mode,failsafe,latitude,longitude,altitude_agl_m,vertical_speed_mps,ground_speed_mps,gps_course_deg,target_bearing_deg,heading_error_deg,distance_to_target_m,servo1_cmd,servo2_cmd,servo1_us,servo2_us,servo1_turn_deg,servo2_turn_deg,roll_deg,pitch_deg,yaw_deg,angular_rate_dps,satellites,satellites_in_view,gps_valid,gps_nmea_active,gps_age_ms,imu_valid,imu_age_ms,baro_valid,baro_age_ms,battery_voltage_v,battery_voltage_valid,servo_rail_voltage_v,servo_rail_voltage_valid,configuration_version,rssi_dbm,snr_db,drop_armed_ms,drop_release_ms,drop_canopy_ms,drop_stable_ms,drop_landing_ms,guided_drop_status,guided_authority_percent,guided_active,neutral_lock");
+    const bool write_ok = file && file.getWriteError() == 0;
+    file.close();
+    if (!write_ok) {
+        SPIFFS.remove(path);
+        recordDropLogWriteError("header write failed");
+        return false;
+    }
+
+    drop_log_filename = path;
+    drop_log_active = true;
+    drop_log_rows = 0;
+    drop_log_last_error = "";
+    drop_log_last_close_reason = "RECORDING";
+    Serial.printf("Ground drop log started: %s test=%u\n",
+                  path.c_str(), test_id);
+    return true;
+}
+
+bool appendGroundDropTelemetry(const TelemetrySnapshot& sample) {
+    if (!drop_log_active || drop_log_filename.isEmpty()) return false;
+
+    File file = SPIFFS.open(drop_log_filename, FILE_APPEND);
+    if (!file) {
+        recordDropLogWriteError("could not append " + drop_log_filename);
+        drop_log_active = false;
+        return false;
+    }
+    if (file.size() >= GROUND_DROP_LOG_MAX_BYTES) {
+        file.close();
+        recordDropLogWriteError("one-megabyte safety limit reached");
+        drop_log_active = false;
+        drop_log_last_close_reason = "SIZE_LIMIT";
+        return false;
+    }
+
+    file.printf("TELEMETRY,%lu,%lu,%u,%u,%s,%u,%s,%s,%s,",
+                static_cast<unsigned long>(sample.rx_ms),
+                static_cast<unsigned long>(sample.payload_time_ms),
+                sample.sequence,
+                sample.drop_test_id,
+                phoenix::dropTestStateName(sample.drop_test_state),
+                sample.drop_test_recording ? 1U : 0U,
+                logic::flightStateName(sample.flight_state),
+                logic::guidanceModeName(sample.guidance_mode),
+                logic::failCodeName(sample.failsafe_code));
+    file.printf("%.7f,%.7f,%.2f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,",
+                sample.latitude, sample.longitude, sample.altitude_agl_m,
+                sample.vertical_speed_mps, sample.ground_speed_mps,
+                sample.gps_course_deg, sample.target_bearing_deg,
+                sample.heading_error_deg, sample.distance_to_target_m);
+    file.printf("%.4f,%.4f,%d,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,",
+                sample.servo1_cmd, sample.servo2_cmd,
+                sample.servo1_us, sample.servo2_us,
+                sample.servo1_turn_deg, sample.servo2_turn_deg,
+                sample.roll_deg, sample.pitch_deg, sample.yaw_deg,
+                sample.angular_rate_dps);
+    file.printf("%u,%u,%u,%u,%lu,%u,%lu,%u,%lu,",
+                sample.satellites, sample.satellites_in_view,
+                sample.gps_valid ? 1U : 0U,
+                sample.gps_nmea_active ? 1U : 0U,
+                static_cast<unsigned long>(sample.gps_age_ms),
+                sample.imu_valid ? 1U : 0U,
+                static_cast<unsigned long>(sample.imu_age_ms),
+                sample.baro_valid ? 1U : 0U,
+                static_cast<unsigned long>(sample.baro_age_ms));
+    file.printf("%.3f,%u,%.3f,%u,%u,%d,%.1f,",
+                sample.battery_voltage_v,
+                sample.battery_voltage_valid ? 1U : 0U,
+                sample.servo_rail_voltage_v,
+                sample.servo_rail_voltage_valid ? 1U : 0U,
+                sample.configuration_version, sample.rssi, sample.snr);
+    file.printf("%lu,%lu,%lu,%lu,%lu,%s,%u,%u,%u\n",
+                static_cast<unsigned long>(sample.drop_test_armed_ms),
+                static_cast<unsigned long>(sample.drop_test_release_ms),
+                static_cast<unsigned long>(sample.drop_test_canopy_ms),
+                static_cast<unsigned long>(sample.drop_test_stable_ms),
+                static_cast<unsigned long>(sample.drop_test_landing_ms),
+                logic::guidedDropStatusName(sample.guided_drop_status),
+                sample.guided_authority_percent,
+                sample.guided_active ? 1U : 0U,
+                sample.drop_test_neutral_lock ? 1U : 0U);
+
+    const bool write_ok = file && file.getWriteError() == 0;
+    file.close();
+    if (!write_ok) {
+        recordDropLogWriteError("telemetry row write failed");
+        drop_log_active = false;
+        return false;
+    }
+    drop_log_rows++;
+    return true;
+}
+
+void updateAutomaticDropLog(const TelemetrySnapshot& sample) {
+    logic::DropLogObservation observation;
+    observation.test_id = sample.drop_test_id;
+    observation.state = static_cast<logic::DropTestState>(sample.drop_test_state);
+    observation.recording = sample.drop_test_recording;
+    observation.payload_time_ms = sample.payload_time_ms;
+    observation.packet_sequence = sample.sequence;
+    const logic::DropLogDecision decision = drop_log_session.observe(observation);
+
+    if (decision.close_previous && drop_log_active) {
+        drop_log_active = false;
+        drop_log_last_close_reason =
+            logic::dropLogCloseReasonName(logic::DropLogCloseReason::INTERRUPTED_BY_NEW_TEST);
+    }
+    if (decision.start_new) startGroundDropLog(decision.test_id);
+    if (decision.append_sample) appendGroundDropTelemetry(sample);
+    if (decision.close_after_sample) {
+        drop_log_active = false;
+        drop_log_last_close_reason = logic::dropLogCloseReasonName(decision.close_reason);
+        Serial.printf("Ground drop log closed: %s reason=%s rows=%lu\n",
+                      drop_log_filename.c_str(),
+                      drop_log_last_close_reason.c_str(),
+                      static_cast<unsigned long>(drop_log_rows));
+    }
+}
+
+void setupDropLogStorage() {
+    drop_log_storage_ok = SPIFFS.begin(true);
+    if (!drop_log_storage_ok) {
+        drop_log_last_error = "SPIFFS mount failed";
+        Serial.println("Ground drop-log storage unavailable");
+        return;
+    }
+    Serial.printf("Ground drop-log storage ready: used=%u total=%u bytes\n",
+                  static_cast<unsigned>(SPIFFS.usedBytes()),
+                  static_cast<unsigned>(SPIFFS.totalBytes()));
+}
 
 struct ManualHold {
     bool active = false;
@@ -476,7 +664,7 @@ void pollTelemetry() {
     telemetry.guided_drop_status =
         static_cast<logic::GuidedDropStatus>((packet.service_test_status >> 4U) & 0x0FU);
     telemetry.guided_authority_percent = packet.guided_authority_percent;
-    telemetry.guided_canopy_confirmed = (packet.guided_flags & 1U) != 0;
+    telemetry.guided_canopy_detected = (packet.guided_flags & 1U) != 0;
     telemetry.guided_confirmation_pending = (packet.guided_flags & 2U) != 0;
     telemetry.guided_physical_arm_active = (packet.guided_flags & 4U) != 0;
     telemetry.guided_abort_latched = (packet.guided_flags & 8U) != 0;
@@ -514,6 +702,7 @@ void pollTelemetry() {
     telemetry.payload_reset_reason = packet.reset_reason;
     telemetry.rssi = radio.getRSSI();
     telemetry.snr = radio.getSNR();
+    updateAutomaticDropLog(telemetry);
 }
 
 void updateManualHold() {
@@ -580,13 +769,10 @@ void printHelp() {
     Serial.println("  help");
     Serial.println("  ping");
     Serial.println("  status                      shows payload LoRa telemetry link");
-    Serial.println("  armdrop                     arm payload-owned inert drop recording");
+    Serial.println("  armdrop                     immediately arm payload-owned drop recording");
     Serial.println("  abortdrop                   abort drop recording and command neutral");
     Serial.println("  bench <1|2> <20|40>         timed unloaded prelaunch servo test");
     Serial.println("  retracttest                 automatic unloaded extend/retract cycle");
-    Serial.println("  canopyready                 record visual canopy readiness confirmation");
-    Serial.println("  guidedprepare <20|40|100>   prepare a staged authority profile");
-    Serial.println("  guidedarm                   confirm arming within five seconds");
     Serial.println("  tiltstart                    15 s IMU/barometer ground roll test");
     Serial.println("  tiltstop                     stop roll test and command neutral");
     Serial.println("  neutral");
@@ -682,8 +868,7 @@ void handleLine(String line) {
         stopTiltHold(true);
         sendCommand(comms::LoRaRemoteCommandType::ARM_DROP_TEST);
     } else if (line == "canopyready") {
-        stopTiltHold(true);
-        sendCommand(comms::LoRaRemoteCommandType::CONFIRM_CANOPY_READY);
+        Serial.println("canopyready removed: payload canopy detection is automatic");
     } else if (line.startsWith("guidedprepare ")) {
         int percent = 0;
         if (sscanf(line.c_str(), "guidedprepare %d", &percent) != 1 ||
@@ -780,7 +965,7 @@ String statusJson() {
     // Keep this large formatter buffer out of loopTask's 8 KB stack. The old
     // automatic 5.2 KB buffer plus snprintf's float formatting overflowed the
     // stack whenever /api/status was requested, rebooting the ground station.
-    static char buf[6000];
+    static char buf[7000];
     snprintf(buf, sizeof(buf),
              "{"
              "\"wifi_ok\":%s,"
@@ -810,6 +995,13 @@ String statusJson() {
              "\"manual_max\":%.3f,"
              "\"command_rssi\":%d,"
              "\"command_snr\":%.1f,"
+             "\"drop_log_storage_ok\":%s,"
+             "\"drop_log_active\":%s,"
+             "\"drop_log_name\":\"%s\","
+             "\"drop_log_rows\":%lu,"
+             "\"drop_log_write_errors\":%lu,"
+             "\"drop_log_close_reason\":\"%s\","
+             "\"drop_log_error\":\"%s\","
              "\"telemetry\":{"
                 "\"valid\":%s,"
                 "\"fresh\":%s,"
@@ -885,7 +1077,7 @@ String statusJson() {
                 "\"servo_retract_test_active\":%s,"
                 "\"guided_drop_status\":\"%s\","
                 "\"guided_authority_percent\":%u,"
-                "\"guided_canopy_confirmed\":%s,"
+                "\"guided_canopy_detected\":%s,"
                 "\"guided_confirmation_pending\":%s,"
                 "\"guided_physical_arm_active\":%s,"
                 "\"guided_abort_latched\":%s,"
@@ -923,6 +1115,13 @@ String statusJson() {
              GROUND_MAX_MANUAL_BRAKE,
              last_command_rssi,
              last_command_snr,
+             drop_log_storage_ok ? "true" : "false",
+             drop_log_active ? "true" : "false",
+             escapeJson(drop_log_filename).c_str(),
+             static_cast<unsigned long>(drop_log_rows),
+             static_cast<unsigned long>(drop_log_write_errors),
+             escapeJson(drop_log_last_close_reason).c_str(),
+             escapeJson(drop_log_last_error).c_str(),
              telemetry.valid ? "true" : "false",
              telemetry_fresh ? "true" : "false",
              static_cast<unsigned long>(telemetry_age),
@@ -997,7 +1196,7 @@ String statusJson() {
              telemetry.servo_retract_test_active ? "true" : "false",
              logic::guidedDropStatusName(telemetry.guided_drop_status),
              telemetry.guided_authority_percent,
-             telemetry.guided_canopy_confirmed ? "true" : "false",
+             telemetry.guided_canopy_detected ? "true" : "false",
              telemetry.guided_confirmation_pending ? "true" : "false",
              telemetry.guided_physical_arm_active ? "true" : "false",
              telemetry.guided_abort_latched ? "true" : "false",
@@ -1039,11 +1238,8 @@ void handleCommandApi() {
         manual_hold.bench_mode = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::ARM_GUIDED_DROP_TEST);
     } else if (type == "canopyready") {
-        if (telemetry.drop_test_recording || telemetry.payload_armed) {
-            sendJson(409, "{\"ok\":false,\"error\":\"Canopy confirmation is locked after arming\"}");
-            return;
-        }
-        ok = sendCommand(comms::LoRaRemoteCommandType::CONFIRM_CANOPY_READY);
+        sendJson(410, "{\"ok\":false,\"error\":\"Visual canopy confirmation was removed; payload detection is automatic\"}");
+        return;
     } else if (type == "guidedprepare") {
         const float authority = server.hasArg("authority")
             ? server.arg("authority").toFloat() : 0.0f;
@@ -1194,6 +1390,97 @@ void handleCommandApi() {
              ",\"status\":" + statusJson() + "}");
 }
 
+String dropLogsJson() {
+    String body = String("{\"storage_ok\":") +
+        (drop_log_storage_ok ? "true" : "false") +
+        ",\"active\":" + (drop_log_active ? "true" : "false") +
+        ",\"active_name\":\"" + escapeJson(drop_log_filename) +
+        "\",\"logs\":[";
+    if (drop_log_storage_ok) {
+        File root = SPIFFS.open("/");
+        File file = root.openNextFile();
+        bool first = true;
+        uint16_t count = 0;
+        while (file && count < 100) {
+            String name = file.name();
+            if (!file.isDirectory() && isDropLogFilename(name)) {
+                if (name.startsWith("/")) name.remove(0, 1);
+                if (!first) body += ',';
+                body += "{\"name\":\"" + escapeJson(name) +
+                        "\",\"size_bytes\":" + String(file.size()) + "}";
+                first = false;
+                count++;
+            }
+            file = root.openNextFile();
+        }
+        root.close();
+    }
+    body += "]}";
+    return body;
+}
+
+void handleDropLogDownload() {
+    if (!drop_log_storage_ok || !server.hasArg("name")) {
+        sendJson(404, "{\"ok\":false,\"error\":\"Drop log not found\"}");
+        return;
+    }
+    const String name = server.arg("name");
+    if (!isDropLogFilename(name)) {
+        sendJson(400, "{\"ok\":false,\"error\":\"Invalid drop-log filename\"}");
+        return;
+    }
+    const String path = dropLogPath(name);
+    File file = SPIFFS.open(path, FILE_READ);
+    if (!file) {
+        sendJson(404, "{\"ok\":false,\"error\":\"Drop log not found\"}");
+        return;
+    }
+    server.sendHeader("Cache-Control", "no-store, max-age=0");
+    server.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
+    server.streamFile(file, "text/csv");
+    file.close();
+}
+
+String dropLogsPage() {
+    String page;
+    page.reserve(5000);
+    page += F("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>PHOENIX Drop Logs</title><style>body{margin:0;background:#07100f;color:#eef8f4;font:15px system-ui}.shell{max-width:800px;margin:auto;padding:24px}h1{margin-bottom:4px}.sub{color:#91aaa4}.notice{margin:18px 0;padding:13px;border-left:3px solid #ffc857;background:#ffc85710}.log{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:14px;margin:10px 0;border:1px solid #203a36;border-radius:12px;background:#0c1817}.name{font:700 13px ui-monospace,monospace}.size{color:#91aaa4;font-size:12px}a{color:#36d4bd}a.button{display:inline-block;padding:10px 13px;border-radius:9px;background:#142824;text-decoration:none;font-weight:800}.live{color:#55dd91}.bad{color:#ff6b6b}</style></head><body><main class='shell'><a href='/'>← Dashboard</a><h1>Automatic Drop Logs</h1><div class='sub'>Ground-station LoRa copies saved without keyboard input.</div>");
+    page += F("<div class='notice'>The payload's onboard 10 Hz binary log remains the scientific timing record. These downloadable CSV files are the lower-rate LoRa copy and may contain gaps if the radio link is interrupted.</div>");
+    if (!drop_log_storage_ok) {
+        page += F("<p class='bad'>Ground log storage is unavailable.</p>");
+    } else {
+        if (drop_log_active) {
+            page += "<p class='live'>Recording now: " + drop_log_filename +
+                    " · " + String(drop_log_rows) + " telemetry rows</p>";
+        }
+        File root = SPIFFS.open("/");
+        File file = root.openNextFile();
+        uint16_t count = 0;
+        while (file && count < 100) {
+            String name = file.name();
+            if (!file.isDirectory() && isDropLogFilename(name)) {
+                if (name.startsWith("/")) name.remove(0, 1);
+                page += "<div class='log'><div><div class='name'>" + name +
+                        "</div><div class='size'>" + String(file.size()) +
+                        " bytes</div></div><a class='button' href='/api/drop-log?name=" +
+                        name + "'>Download CSV</a></div>";
+                count++;
+            }
+            file = root.openNextFile();
+        }
+        root.close();
+        if (count == 0) page += F("<p class='sub'>No drop-test CSV has been recorded yet.</p>");
+    }
+    page += F("</main></body></html>");
+    return page;
+}
+
+void sendDropLogsPage() {
+    server.sendHeader("Cache-Control", "no-store, max-age=0");
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/html", dropLogsPage());
+}
+
 String htmlPage() {
     return R"HTML(
 <!doctype html>
@@ -1284,22 +1571,24 @@ button,input,select{font:inherit}.shell{width:min(1400px,100%);margin:auto;paddi
 
     <article class="card">
       <div class="cardHead"><h2>Drop Test Recording</h2><span id="dropGate" class="tiny">PAYLOAD OWNED</span></div>
-      <div class="notice">The payload owns arming and control. Guided return requires a physical arm switch, recorded canopy confirmation, stable Home fixes, an unlocked authority level, and two commands within five seconds. Flare remains disabled.</div>
+      <div class="notice">Arm Neutral Drop Test starts the fail-neutral recorder immediately. Arm Automatic Return is a separate one-press request and remains calibration-locked until its physical arm, target, sensors, and 20% authority stage are ready. No visual canopy confirmation is used; automatic return stays neutral until release, canopy-load detection, and stable descent. Flare remains disabled.</div>
       <div class="rows">
         <div class="row"><span class="k">Drop state</span><span id="dropState" class="v">--</span></div>
         <div class="row"><span class="k">Automatic return profile</span><span id="guidedDropState" class="v">--</span></div>
         <div class="row"><span class="k">Physical arm</span><span id="physicalArm" class="v">--</span></div>
-        <div class="row"><span class="k">Canopy observation</span><span id="canopyReady" class="v">--</span></div>
-        <div class="row"><span class="k">Authority / confirmation</span><span id="guidedAuthority" class="v">--</span></div>
+        <div class="row"><span class="k">Automatic canopy detection</span><span id="canopyAuto" class="v">--</span></div>
+        <div class="row"><span class="k">Guided authority</span><span id="guidedAuthority" class="v">--</span></div>
+        <div class="row"><span class="k">Arm readiness</span><span id="dropArmReady" class="v">--</span></div>
         <div class="row"><span class="k">Recovery recording</span><span id="recoveryMode" class="v">AUTO READY</span></div>
         <div class="row"><span class="k">Test ID</span><span id="dropId" class="v">--</span></div>
+        <div class="row"><span class="k">Automatic ground CSV</span><span id="groundDropLog" class="v">--</span></div>
+        <div class="row"><span class="k">Ground CSV rows</span><span id="groundDropRows" class="v">--</span></div>
         <div class="row"><span class="k">Payload time</span><span id="payloadTime" class="v">--</span></div>
         <div class="row"><span class="k">Event times</span><span id="dropTimes" class="v">--</span></div>
       </div>
-      <div class="commandRow"><button class="primary" onclick="armDrop()">Arm Drop Test</button><button class="danger" onclick="abortDrop()">Abort And Neutral</button></div>
-      <div class="field"><label>Guided authority phase</label><select id="guidedAuthoritySelect"><option value="0.20">20 percent</option><option value="0.40">40 percent</option><option value="1.00">Validated full safe</option></select></div>
-      <div class="commandRow"><button id="canopyConfirm" onclick="confirmCanopyReady()">Record Canopy Ready</button><button id="guidedArm" class="primary" onclick="armGuidedDrop()" disabled>Prepare Automatic Return</button></div>
-      <button class="full" onclick="requestLogIndex()">Request Log Index</button>
+      <div class="commandRow"><button id="armDropButton" class="primary" onclick="armDrop()">Arm Neutral Drop Test</button><button id="armGuidedButton" onclick="armAutomaticReturn()">Arm Automatic Return</button></div>
+      <button class="danger full" onclick="abortDrop()">Abort And Neutral</button>
+      <div class="commandRow"><button onclick="location.href='/drop-logs'">Open Saved CSV Logs</button><button onclick="requestLogIndex()">Request Payload Log Index</button></div>
       <div id="dropStatus" class="status">Waiting for payload telemetry.</div>
     </article>
 
@@ -1346,7 +1635,9 @@ let pendingBench='';
 let pendingBenchUntil=0;
 let benchMessageUntil=0;
 let lastRetractStatus='';
-let guidedPrepareUntil=0;
+let lastRemoteRejected=0;
+let armRejectBaseline=0;
+let armRequestLabel='';
 async function api(path){
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),3000);
@@ -1359,7 +1650,7 @@ async function api(path){
 }
 async function command(q,statusId='manualStatus'){
   const box=el(statusId); if(box) box.textContent='Sending…';
-  try { const j=await api('/api/command?'+q); if(q.indexOf('type=armdrop')>=0) armWaitUntil=Date.now()+6500; if(box) box.textContent='Ground transmitted: '+j.status.last_command+' · waiting for payload confirmation'; await refresh(); return true; }
+  try { const j=await api('/api/command?'+q); if(q.indexOf('type=armdrop')>=0||q.indexOf('type=guidedarm')>=0) armWaitUntil=Date.now()+6500; if(box) box.textContent='Ground transmitted: '+j.status.last_command+' · waiting for payload confirmation'; await refresh(); return true; }
   catch(e){ if(box) box.textContent='Error: '+e.message; return false; }
 }
 function dropLocked(statusId){
@@ -1391,18 +1682,8 @@ function automaticRetractTest(){
 }
 function startTilt(){if(dropLocked('tiltStatus'))return;if(confirm('Hold the payload upright and clear the servo/linkage area. Start a 15-second, 15%-maximum roll-damping test?'))command('type=tiltstart','tiltStatus')}
 function stopTilt(){command('type=tiltstop','tiltStatus')}
-function armDrop(){if(confirm('Arm payload-owned drop-test recording? Servos will stay neutral.'))command('type=armdrop','dropStatus')}
-function confirmCanopyReady(){if(confirm('Visually confirm the pre-opened steerable canopy is inflated, untangled, and clear of the release structure. Record this observation?'))command('type=canopyready','dropStatus')}
-async function armGuidedDrop(){
-  const now=Date.now(),authority=el('guidedAuthoritySelect').value;
-  if(now>guidedPrepareUntil){
-    if(!confirm('Prepare the selected calibration-locked authority phase? This does not arm until the second command.'))return;
-    if(await command('type=guidedprepare&authority='+encodeURIComponent(authority),'dropStatus')){guidedPrepareUntil=Date.now()+5000;el('guidedArm').textContent='Confirm Arm Within 5 Seconds';}
-    return;
-  }
-  guidedPrepareUntil=0;
-  if(confirm('Final confirmation: arm the automatic-return inert drop recorder now?'))command('type=guidedarm','dropStatus');
-}
+function armDrop(){armRejectBaseline=lastRemoteRejected;armRequestLabel='Neutral drop test';command('type=armdrop','dropStatus')}
+function armAutomaticReturn(){armRejectBaseline=lastRemoteRejected;armRequestLabel='Automatic return';command('type=guidedarm','dropStatus')}
 function abortDrop(){if(confirm('Abort drop recording and command neutral?'))command('type=abortdrop','dropStatus')}
 function requestLogIndex(){command('type=logindex','dropStatus')}
 function disableRemote(){ if(confirm('Disable rocket LoRa remote control until rocket reboot?')) command('type=disable') }
@@ -1417,8 +1698,17 @@ function armBlockers(t){
   if(!t.valid||!t.fresh)b.push('payload link');
   if(!t.imu_valid)b.push('IMU');
   if(!t.baro_valid)b.push('BARO');
+  if(!t.servo_healthy)b.push('servo controller');
   if(t.failsafe&&t.failsafe!=='NONE')b.push('failsafe '+t.failsafe);
+  if(!['IDLE','TEST_COMPLETE','TEST_ABORTED'].includes(t.drop_test_state))b.push('drop state '+t.drop_test_state);
   return b;
+}
+function guidedArmBlockers(t){
+  const b=armBlockers(t);
+  if((t.guided_profile_unlock_flags&7)!==7)b.push('20% calibration lock');
+  if(!t.guided_physical_arm_active)b.push('physical arm');
+  if(!t.gps_valid)b.push('GPS/target');
+  return [...new Set(b)];
 }
 async function refresh(){
   if(refreshBusy)return;
@@ -1436,24 +1726,31 @@ async function refresh(){
     el('gpsBadge').textContent=t.gps_valid?(t.satellites+' USED · FIX'):(t.gps_nmea_active?('SEARCHING · '+t.satellites_in_view+' VISIBLE'):'NO GNSS DATA');
     health(el('gpsSensor'),el('gpsText'),t.gps_valid,t.gps_valid?('FIX · '+t.satellites+' USED / '+t.satellites_in_view+' VISIBLE'):(t.gps_nmea_active?('CONNECTED · '+t.satellites_in_view+' VISIBLE'):'NO DATA'));if(!t.gps_valid&&t.gps_nmea_active)el('gpsSensor').className='sensor';health(el('imuSensor'),el('imuText'),t.imu_valid,t.imu_valid?'HEALTHY':'ERROR');health(el('baroSensor'),el('baroText'),t.baro_valid,t.baro_valid?'HEALTHY':'ERROR');
     el('dropState').textContent=t.drop_test_state;el('dropId').textContent=t.drop_test_id?('#'+t.drop_test_id):'--';
+    el('groundDropLog').textContent=!s.drop_log_storage_ok?'STORAGE ERROR':s.drop_log_active?('RECORDING '+s.drop_log_name):s.drop_log_name?('CLOSED · '+s.drop_log_close_reason):'READY';
+    el('groundDropLog').className='v '+(!s.drop_log_storage_ok||s.drop_log_write_errors?'bad':s.drop_log_active?'ok':'');
+    el('groundDropRows').textContent=s.drop_log_rows+' rows'+(s.drop_log_write_errors?(' · '+s.drop_log_write_errors+' errors'):'');
     el('guidedDropState').textContent=t.guided_drop_status;
     el('physicalArm').textContent=t.guided_physical_arm_active?'ACTIVE':'NOT ACTIVE';el('physicalArm').className='v '+(t.guided_physical_arm_active?'ok':'bad');
-    el('canopyReady').textContent=t.guided_canopy_confirmed?'RECORDED':'NOT CONFIRMED';el('canopyReady').className='v '+(t.guided_canopy_confirmed?'ok':'warn');
-    el('guidedAuthority').textContent=t.guided_authority_percent+'% · '+(t.guided_confirmation_pending?'CONFIRM NOW':'NOT PREPARED');
-    const guidedAvailable=(t.guided_profile_unlock_flags&3)===3;
-    const guidedReady=guidedAvailable&&t.guided_physical_arm_active&&t.guided_canopy_confirmed&&t.gps_valid&&t.imu_valid&&t.baro_valid&&t.servo_healthy&&!dropRecordingActive;
-    el('guidedArm').disabled=!guidedReady;
-    if(!guidedAvailable)el('guidedArm').textContent='Automatic Return Locked · Calibration Required';
-    else if(Date.now()>guidedPrepareUntil)el('guidedArm').textContent='Prepare Automatic Return';
-    el('canopyConfirm').disabled=dropRecordingActive||!t.fresh;
+    el('canopyAuto').textContent=t.guided_canopy_detected?'DETECTED AFTER RELEASE':'WAITING';el('canopyAuto').className='v '+(t.guided_canopy_detected?'ok':'warn');
+    el('guidedAuthority').textContent=t.guided_authority_percent+'% · '+(t.guided_active?'ACTIVE':t.guided_drop_status);
+    const neutralArmBlockers=armBlockers(t),guidedBlockers=guidedArmBlockers(t);
+    // Keep both controls usable when idle so a press receives the payload's
+    // authoritative accept/reject result. Readiness text explains known
+    // blockers, while the payload remains responsible for every safety gate.
+    el('armDropButton').disabled=dropRecordingActive;
+    el('armGuidedButton').disabled=dropRecordingActive;
+    el('dropArmReady').textContent=neutralArmBlockers.length?('LOCKED · '+neutralArmBlockers.join(', ')):'NEUTRAL TEST READY';
+    el('dropArmReady').className='v '+(neutralArmBlockers.length?'bad':'ok');
     const launchRecovery=['ASCENT','APOGEE_DETECT','APOGEE_CONFIRMED','DEPLOYMENT_WAIT','PARAFOIL_STABILIZATION','GUIDED_DESCENT','FINAL_APPROACH','FLARE'].includes(t.flight_state);
     el('recoveryMode').textContent=t.drop_test_recording?'INERT DROP · LOCAL LOG':(launchRecovery?'LAUNCH RECOVERY · AUTO LOG':'AUTO LAUNCH READY');
     el('payloadTime').textContent=t.payload_time_ms?(t.payload_time_ms+' ms onboard'):'--';
     el('dropTimes').textContent='payload ms: arm '+(t.drop_test_armed_ms||'--')+' · release '+(t.drop_test_release_ms||'--')+' · canopy signature '+(t.drop_test_canopy_ms||'--')+' · stable '+(t.drop_test_stable_ms||'--')+' · landing '+(t.drop_test_landing_ms||'--');
     el('dropGate').textContent=t.drop_test_neutral_lock?'NEUTRAL LOCK':'PAYLOAD OWNED';el('dropGate').className='tiny '+(t.drop_test_recording?'ok':'warn');
-    if(t.drop_test_recording){armWaitUntil=0;el('dropStatus').textContent='Payload recording locally. LoRa is preview-only and quiet.';}
-    else if(Date.now()<armWaitUntil){const b=armBlockers(t);el('dropStatus').textContent=b.length?('Arm sent; waiting for payload. Check '+b.join(', ')+'.'):'Arm sent; waiting for payload to accept.';}
+    if(t.drop_test_recording){armWaitUntil=0;el('dropStatus').textContent='Payload accepted '+(t.guided_drop_status==='DISABLED'?'the neutral drop test':'automatic return')+'. High-rate payload log and ground CSV are recording.';}
+    else if(Date.now()<armWaitUntil&&t.remote_rejected_count>armRejectBaseline){armWaitUntil=0;const b=armRequestLabel==='Automatic return'?guidedBlockers:neutralArmBlockers;el('dropStatus').textContent=armRequestLabel+' rejected by payload'+(b.length?(': '+b.join(', ')):'.');}
+    else if(Date.now()<armWaitUntil){const b=armRequestLabel==='Automatic return'?guidedBlockers:neutralArmBlockers;el('dropStatus').textContent=b.length?('Arm request sent; check '+b.join(', ')+'.'):'Arm request sent; waiting for payload acceptance.';}
     else{el('dropStatus').textContent='Drop recorder idle or closed.';}
+    lastRemoteRejected=t.remote_rejected_count;
     el('failsafe').textContent=t.failsafe==='NONE'?'FAILSAFE CLEAR':'FAILSAFE '+t.failsafe;el('failsafe').className='tiny '+(t.failsafe==='NONE'?'ok':'bad');
     el('roll').textContent=num(t.roll_deg)+'°';el('pitch').textContent=num(t.pitch_deg)+'°';el('yaw').textContent=num(t.yaw_deg)+'°';
     el('servo1Text').textContent=Math.round(t.servo1_cmd*100)+'% · '+t.servo1_us+' µs · '+num(t.servo1_turn_deg)+'°';el('servo2Text').textContent=Math.round(t.servo2_cmd*100)+'% · '+t.servo2_us+' µs · '+num(t.servo2_turn_deg)+'°';
@@ -1546,7 +1843,10 @@ void setupWeb() {
     dns_ok = dns.start(53, "*", ap_ip);
 
     server.on("/", HTTP_ANY, sendDashboardPage);
+    server.on("/drop-logs", HTTP_GET, sendDropLogsPage);
     server.on("/api/status", HTTP_GET, []() { sendJson(200, statusJson()); });
+    server.on("/api/drop-logs", HTTP_GET, []() { sendJson(200, dropLogsJson()); });
+    server.on("/api/drop-log", HTTP_GET, handleDropLogDownload);
     server.on("/api/command", HTTP_GET, handleCommandApi);
 
     // Common captive-network detection paths used by Apple, Android/ChromeOS,
@@ -1617,6 +1917,7 @@ void setup() {
     boot_reset_reason = esp_reset_reason();
     Serial.println();
     Serial.println("PHOENIX LoRa ground control starting...");
+    setupDropLogStorage();
     setupWeb();
     setupLoRa();
     printHelp();

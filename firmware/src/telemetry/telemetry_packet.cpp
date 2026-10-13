@@ -58,7 +58,7 @@ void encodeTelemetry(const phoenix::VehicleState& state, TelemetryPacketV1& pack
                                (state.servo_rail_voltage_valid ? 2U : 0U);
     packet.guided_authority_percent =
         logic::guidedAuthorityPercent(state.guided_authority);
-    packet.guided_flags = (state.guided_canopy_confirmed ? 1U : 0U) |
+    packet.guided_flags = (state.guided_canopy_detected ? 1U : 0U) |
                           (state.guided_confirmation_pending ? 2U : 0U) |
                           (state.guided_physical_arm_active ? 4U : 0U) |
                           (state.guided_abort_latched ? 8U : 0U) |

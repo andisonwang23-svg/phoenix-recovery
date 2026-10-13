@@ -2,8 +2,9 @@
 // PHOENIX RECOVERY — guarded return-to-target controller for inert drop tests.
 //
 // This controller never handles launch. It can own the brakes only after an
-// explicitly armed drop recorder confirms release, the deployment-neutral
-// delay has elapsed, stable descent has persisted, and navigation is valid.
+// explicitly armed drop recorder confirms release, observes an automatic
+// canopy load signature, the deployment-neutral delay has elapsed, stable
+// descent has persisted, and navigation is valid.
 // ============================================================================
 #pragma once
 
@@ -79,7 +80,7 @@ struct GuidedDropInput {
     DropTestState drop_state = DropTestState::IDLE;
     uint32_t release_confirm_ms = 0;
     bool stable_descent_observed = false;
-    bool canopy_confirmed = false;
+    bool canopy_event_observed = false;
     bool abort_latched = false;
     GuidedAuthorityLevel authority = GuidedAuthorityLevel::NEUTRAL;
     float authority_limit = 0.0f;

@@ -41,7 +41,7 @@ static GuidedDropInput nominal(uint32_t now_ms) {
     in.drop_state = DropTestState::STABLE_DESCENT_OBSERVED;
     in.release_confirm_ms = 100;
     in.stable_descent_observed = true;
-    in.canopy_confirmed = true;
+    in.canopy_event_observed = true;
     in.authority = GuidedAuthorityLevel::TWENTY_PERCENT;
     in.authority_limit = 0.20f;
     in.latitude = 41.0;
@@ -166,10 +166,10 @@ void persistent_instability_after_guidance_latches_neutral() {
     TEST_ASSERT_TRUE(out.neutral_required);
 }
 
-void canopy_confirmation_and_authority_are_hard_gates() {
+void automatic_canopy_event_and_authority_are_hard_gates() {
     GuidedDropController controller(config());
     auto in = nominal(301);
-    in.canopy_confirmed = false;
+    in.canopy_event_observed = false;
     auto out = controller.step(in);
     TEST_ASSERT_EQUAL((int)GuidedDropStatus::WAITING_STABLE_DESCENT, (int)out.status);
     TEST_ASSERT_TRUE(out.neutral_required);
@@ -243,7 +243,7 @@ int main() {
     RUN_TEST(short_gps_loss_unwinds_then_latches_failsafe);
     RUN_TEST(critical_sensor_or_servo_fault_latches_neutral);
     RUN_TEST(persistent_instability_after_guidance_latches_neutral);
-    RUN_TEST(canopy_confirmation_and_authority_are_hard_gates);
+    RUN_TEST(automatic_canopy_event_and_authority_are_hard_gates);
     RUN_TEST(gps_jump_requires_plausible_recovery_fixes);
     RUN_TEST(validated_imu_course_hold_is_bounded_and_optional);
     RUN_TEST(landing_or_abort_always_neutralizes);

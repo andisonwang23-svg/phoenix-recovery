@@ -52,7 +52,7 @@ struct TelemetryPacketV1 {
     uint16_t servo_rail_mv = 0;
     uint8_t  power_valid_flags = 0; // bit0 battery, bit1 servo rail
     uint8_t  guided_authority_percent = 0;
-    uint8_t  guided_flags = 0; // canopy, confirm, physical arm, abort, GPS suspect, course hold, damping, active
+    uint8_t  guided_flags = 0; // automatic canopy event, confirm, physical arm, abort, GPS suspect, course hold, damping, active
     uint8_t  guided_profile_unlock_flags = 0; // feature/calibration/20/40/full
 
     // Altitude / vertical

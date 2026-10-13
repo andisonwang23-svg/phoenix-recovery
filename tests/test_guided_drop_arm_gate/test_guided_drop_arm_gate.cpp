@@ -26,12 +26,11 @@ static GuidedArmPrerequisites ready() {
     return p;
 }
 
-void requires_canopy_and_physical_arm() {
+void visual_canopy_confirmation_is_not_required_but_physical_arm_is() {
     GuidedDropArmGate gate(5000);
     auto out = gate.prepare(100, GuidedAuthorityLevel::TWENTY_PERCENT,
                             unlocked20(), ready());
-    TEST_ASSERT_EQUAL((int)GuidedArmStatus::REJECTED_CANOPY, (int)out.status);
-    gate.confirmCanopy(120, true);
+    TEST_ASSERT_EQUAL((int)GuidedArmStatus::PREPARED, (int)out.status);
     auto prerequisites = ready();
     prerequisites.physical_arm_active = false;
     out = gate.prepare(200, GuidedAuthorityLevel::TWENTY_PERCENT,
@@ -41,7 +40,6 @@ void requires_canopy_and_physical_arm() {
 
 void authority_progression_is_fail_closed() {
     GuidedDropArmGate gate;
-    gate.confirmCanopy(100, true);
     auto out = gate.prepare(200, GuidedAuthorityLevel::FORTY_PERCENT,
                             unlocked20(), ready());
     TEST_ASSERT_EQUAL((int)GuidedArmStatus::REJECTED_AUTHORITY_LOCK, (int)out.status);
@@ -52,7 +50,6 @@ void authority_progression_is_fail_closed() {
 
 void two_step_confirmation_arms_inside_window() {
     GuidedDropArmGate gate(5000);
-    gate.confirmCanopy(100, true);
     auto out = gate.prepare(200, GuidedAuthorityLevel::TWENTY_PERCENT,
                             unlocked20(), ready());
     TEST_ASSERT_TRUE(out.confirmation_pending);
@@ -63,7 +60,6 @@ void two_step_confirmation_arms_inside_window() {
 
 void expired_or_changed_prerequisites_cannot_arm() {
     GuidedDropArmGate gate(5000);
-    gate.confirmCanopy(100, true);
     gate.prepare(200, GuidedAuthorityLevel::TWENTY_PERCENT, unlocked20(), ready());
     auto out = gate.confirmAndArm(5201, unlocked20(), ready());
     TEST_ASSERT_FALSE(out.arm_authorized);
@@ -77,11 +73,30 @@ void expired_or_changed_prerequisites_cannot_arm() {
     TEST_ASSERT_EQUAL((int)GuidedArmStatus::REJECTED_TARGET, (int)out.status);
 }
 
+void one_step_arm_uses_the_requested_unlocked_authority() {
+    GuidedDropArmGate gate(5000);
+    auto out = gate.armNow(100, GuidedAuthorityLevel::TWENTY_PERCENT,
+                           unlocked20(), ready());
+    TEST_ASSERT_TRUE(out.arm_authorized);
+    TEST_ASSERT_FALSE(out.confirmation_pending);
+    TEST_ASSERT_EQUAL((int)GuidedArmStatus::ARMED, (int)out.status);
+    TEST_ASSERT_EQUAL((int)GuidedAuthorityLevel::TWENTY_PERCENT,
+                      (int)out.authority);
+
+    auto prerequisites = ready();
+    prerequisites.gps_valid = false;
+    out = gate.armNow(200, GuidedAuthorityLevel::TWENTY_PERCENT,
+                      unlocked20(), prerequisites);
+    TEST_ASSERT_FALSE(out.arm_authorized);
+    TEST_ASSERT_EQUAL((int)GuidedArmStatus::REJECTED_TARGET, (int)out.status);
+}
+
 int main() {
     UNITY_BEGIN();
-    RUN_TEST(requires_canopy_and_physical_arm);
+    RUN_TEST(visual_canopy_confirmation_is_not_required_but_physical_arm_is);
     RUN_TEST(authority_progression_is_fail_closed);
     RUN_TEST(two_step_confirmation_arms_inside_window);
     RUN_TEST(expired_or_changed_prerequisites_cannot_arm);
+    RUN_TEST(one_step_arm_uses_the_requested_unlocked_authority);
     return UNITY_END();
 }

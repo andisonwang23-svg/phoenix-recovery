@@ -566,7 +566,8 @@ void loop() {
     const logic::GuidedArmResult guided_arm_snapshot =
         guided_drop_arm_gate.snapshot(now);
     vehicle.guided_arm_status = guided_arm_snapshot.status;
-    vehicle.guided_canopy_confirmed = guided_arm_snapshot.canopy_confirmed;
+    vehicle.guided_canopy_detected =
+        vehicle.drop_test_canopy_signature_ms != 0;
     vehicle.guided_confirmation_pending = guided_arm_snapshot.confirmation_pending;
     vehicle.guided_physical_arm_active = guidedPhysicalArmActive();
     vehicle.guided_authority = guided_authority;
@@ -586,7 +587,7 @@ void loop() {
     guided_in.drop_state = vehicle.drop_test_state;
     guided_in.release_confirm_ms = vehicle.drop_test_release_confirm_ms;
     guided_in.stable_descent_observed = vehicle.drop_test_stable_descent_ms != 0;
-    guided_in.canopy_confirmed = vehicle.guided_canopy_confirmed;
+    guided_in.canopy_event_observed = vehicle.guided_canopy_detected;
     guided_in.abort_latched = guided_abort_latched;
     guided_in.authority = guided_authority;
     guided_in.authority_limit = vehicle.guided_authority_limit;
@@ -847,7 +848,7 @@ static void publishDropTestOutput(const logic::DropTestOutput& out) {
         guided_authority = logic::GuidedAuthorityLevel::NEUTRAL;
         vehicle.guided_drop_requested = false;
         vehicle.guided_drop_active = false;
-        vehicle.guided_canopy_confirmed = false;
+        vehicle.guided_canopy_detected = false;
         vehicle.guided_confirmation_pending = false;
         vehicle.guided_authority = logic::GuidedAuthorityLevel::NEUTRAL;
         vehicle.guided_authority_limit = 0.0f;
@@ -892,7 +893,6 @@ bool armDropTest(uint32_t now, bool guided_return) {
         (!cfg::GUIDED_DROP_TEST_ENABLED ||
          !cfg::GUIDED_DROP_CALIBRATION_CONFIRMED ||
          !target_valid || !vehicle.gps_valid ||
-         !vehicle.guided_canopy_confirmed ||
          !guidedPhysicalArmActive() ||
          guided_authority == logic::GuidedAuthorityLevel::NEUTRAL)) {
         vehicle.drop_test_rejected_count++;
@@ -944,10 +944,10 @@ bool armDropTest(uint32_t now, bool guided_return) {
     ring_buf.pushEvent(armed_event);
     flash_log.logEvent(armed_event);
     if (guided_return) {
-        // The visual confirmation may have been recorded in the preceding
-        // boot/preflight log. Repeat it in the newly opened test file so that
-        // the guided-run evidence is self-contained.
-        flash_log.logEvent("GUIDED_CANOPY_VISUALLY_CONFIRMED");
+        // No visual pre-open confirmation is used. The controller remains
+        // neutral until the payload records a canopy load signature and a
+        // separate stable-descent window after release.
+        flash_log.logEvent("GUIDED_CANOPY_AUTODETECTION_REQUIRED");
     }
     phoenix::logging::ConfigurationSnapshotV1 snapshot{};
     snapshot.schema_version = 1;
@@ -1158,31 +1158,27 @@ void updateLoRaRemoteControl() {
             flash_log.logEvent("LORA_BENCH_SERVO_ACTIVE");
             break;
         }
-        case comms::LoRaRemoteCommandType::ARM_DROP_TEST:
+        case comms::LoRaRemoteCommandType::ARM_DROP_TEST: {
             servo_retract_test.stop();
             lora_tilt_stabilizer_requested = false;
             tilt_stabilizer.disarm();
-            if (armDropTest(now, false)) {
+            const bool accepted = armDropTest(now, false);
+            if (accepted) {
                 vehicle.lora_remote_accepted_count++;
             } else {
                 vehicle.lora_remote_rejected_count++;
             }
             break;
+        }
         case comms::LoRaRemoteCommandType::CONFIRM_CANOPY_READY: {
             servo_retract_test.stop();
             lora_tilt_stabilizer_requested = false;
             tilt_stabilizer.disarm();
-            const logic::GuidedArmResult result =
-                guided_drop_arm_gate.confirmCanopy(now, !vehicle.drop_test_recording);
-            vehicle.guided_arm_status = result.status;
-            vehicle.guided_canopy_confirmed = result.canopy_confirmed;
-            if (result.canopy_confirmed) {
-                vehicle.lora_remote_accepted_count++;
-                ring_buf.pushEvent("GUIDED_CANOPY_VISUALLY_CONFIRMED");
-                flash_log.logEvent("GUIDED_CANOPY_VISUALLY_CONFIRMED");
-            } else {
-                vehicle.lora_remote_rejected_count++;
-            }
+            // Retain the packet number for compatibility with older ground
+            // firmware, but visual confirmation no longer has control authority.
+            vehicle.lora_remote_rejected_count++;
+            ring_buf.pushEvent("CANOPY_CONFIRM_COMMAND_DEPRECATED");
+            flash_log.logEvent("CANOPY_CONFIRM_COMMAND_DEPRECATED");
             break;
         }
         case comms::LoRaRemoteCommandType::PREPARE_GUIDED_DROP_TEST: {
@@ -1219,13 +1215,33 @@ void updateLoRaRemoteControl() {
             servo_retract_test.stop();
             lora_tilt_stabilizer_requested = false;
             tilt_stabilizer.disarm();
-            const logic::GuidedArmResult result = guided_drop_arm_gate.confirmAndArm(
-                now, guidedDropUnlocks(), guidedArmPrerequisites());
+            // The current dashboard uses this as a single-step arm request.
+            // The payload still owns every gate and selects only the lowest
+            // calibrated 20% authority stage.
+            const logic::GuidedArmResult result = guided_drop_arm_gate.armNow(
+                now,
+                logic::GuidedAuthorityLevel::TWENTY_PERCENT,
+                guidedDropUnlocks(),
+                guidedArmPrerequisites());
             vehicle.guided_arm_status = result.status;
-            vehicle.guided_confirmation_pending = result.confirmation_pending;
-            if (result.arm_authorized && armDropTest(now, true)) {
+            vehicle.guided_confirmation_pending = false;
+            if (result.arm_authorized) {
+                guided_authority = result.authority;
+                vehicle.guided_authority = result.authority;
+            }
+            const bool armed = result.arm_authorized && armDropTest(now, true);
+            if (armed) {
                 vehicle.lora_remote_accepted_count++;
             } else {
+                // Never leave an ARMED guided gate or non-neutral authority
+                // behind if the recorder's independent final gate rejects.
+                if (result.arm_authorized) {
+                    guided_drop_arm_gate.reset();
+                    guided_authority = logic::GuidedAuthorityLevel::NEUTRAL;
+                    vehicle.guided_arm_status = logic::GuidedArmStatus::IDLE;
+                    vehicle.guided_authority = logic::GuidedAuthorityLevel::NEUTRAL;
+                    vehicle.guided_authority_limit = 0.0f;
+                }
                 vehicle.lora_remote_rejected_count++;
                 ring_buf.pushEvent(logic::guidedArmStatusName(result.status));
                 flash_log.logEvent(logic::guidedArmStatusName(result.status));

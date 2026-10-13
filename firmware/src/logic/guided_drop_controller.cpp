@@ -295,7 +295,7 @@ GuidedDropOutput GuidedDropController::step(const GuidedDropInput& in) {
         resetNavigationTimers();
         return neutral(GuidedDropStatus::DEPLOYMENT_NEUTRAL);
     }
-    if (!in.canopy_confirmed || !in.stable_descent_observed ||
+    if (!in.canopy_event_observed || !in.stable_descent_observed ||
         !std::isfinite(in.angular_rate_dps) ||
         (!guidance_started_ &&
          in.angular_rate_dps > config_.max_activation_angular_rate_dps)) {

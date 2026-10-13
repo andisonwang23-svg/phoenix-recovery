@@ -2,9 +2,10 @@
 // PHOENIX RECOVERY — payload-owned arming gate for inert guided drop tests.
 //
 // The ground dashboard may request actions, but this gate is authoritative.
-// It requires a physical arm input, recorded canopy observation, healthy
-// prerequisites, an unlocked authority level, and two commands inside a short
-// confirmation window.  It never authorizes powered-flight steering.
+// It requires a physical arm input, healthy prerequisites, and an unlocked
+// authority level. The normal dashboard uses armNow(); legacy two-command
+// methods remain compatible with older ground firmware. Canopy readiness is
+// detected automatically after release by the payload controller.
 // ============================================================================
 #pragma once
 
@@ -93,7 +94,6 @@ struct GuidedArmPrerequisites {
 struct GuidedArmResult {
     GuidedArmStatus status = GuidedArmStatus::IDLE;
     GuidedAuthorityLevel authority = GuidedAuthorityLevel::NEUTRAL;
-    bool canopy_confirmed = false;
     bool confirmation_pending = false;
     bool arm_authorized = false;
 };
@@ -103,18 +103,19 @@ public:
     explicit GuidedDropArmGate(uint32_t confirmation_window_ms = 5000);
 
     void reset();
-    GuidedArmResult confirmCanopy(uint32_t now_ms, bool recorder_idle);
     GuidedArmResult prepare(uint32_t now_ms, GuidedAuthorityLevel authority,
                             const GuidedDropUnlocks& unlocks,
                             const GuidedArmPrerequisites& prerequisites);
     GuidedArmResult confirmAndArm(uint32_t now_ms,
                                   const GuidedDropUnlocks& unlocks,
                                   const GuidedArmPrerequisites& prerequisites);
+    GuidedArmResult armNow(uint32_t now_ms, GuidedAuthorityLevel authority,
+                           const GuidedDropUnlocks& unlocks,
+                           const GuidedArmPrerequisites& prerequisites);
     GuidedArmResult snapshot(uint32_t now_ms) const;
 
 private:
     uint32_t confirmation_window_ms_ = 5000;
-    uint32_t canopy_confirmed_ms_ = 0;
     uint32_t prepared_ms_ = 0;
     GuidedAuthorityLevel authority_ = GuidedAuthorityLevel::NEUTRAL;
     GuidedArmStatus status_ = GuidedArmStatus::IDLE;

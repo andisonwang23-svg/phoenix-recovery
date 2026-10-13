@@ -144,7 +144,7 @@ struct VehicleState {
         logic::GuidedAuthorityLevel::NEUTRAL;
     bool guided_drop_requested = false;
     bool guided_drop_active = false;
-    bool guided_canopy_confirmed = false;
+    bool guided_canopy_detected = false;
     bool guided_confirmation_pending = false;
     bool guided_physical_arm_active = false;
     bool guided_abort_latched = false;

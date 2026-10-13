@@ -16,7 +16,8 @@ but is **disabled by default**. `GUIDED_DROP_TEST_ENABLED` and
 `GUIDED_DROP_CALIBRATION_CONFIRMED` must both be true. A real physical arm input
 must also be assigned to `PIN_GUIDED_DROP_ARM_SWITCH`; a compile-time assertion
 prevents guidance from being enabled without it. The 20%, 40%, and validated
-authority stages have independent unlocks, all false by default. Flare remains
+authority stages have independent unlocks, all false by default. The dashboard
+uses the first unlocked 20% stage for its one-press arm action. Flare remains
 disabled.
 
 This is an inert recovery-module test profile. It does not authorize powered
@@ -79,16 +80,22 @@ When the calibration lock is eventually released, the inert guided profile is:
 
 1. Ground captures Home only after five consecutive plausible GPS fixes, or
    sets and verifies another nonzero target.
-2. An observer confirms the pre-opened canopy is inflated and untangled.
-3. The physical arm input must be active and all health/logging gates must pass.
-4. Ground selects an unlocked authority stage, sends **Prepare**, then sends
-   **Confirm Arm** within five seconds. Changed prerequisites invalidate it.
+2. The physical arm input must be active and all health/logging gates must pass.
+3. Pressing **Arm Drop Test Now** immediately sends one arming request. There is
+   no browser confirmation dialog, visual canopy-ready button, or second
+   Prepare/Confirm action.
+4. If guided testing is calibration-unlocked, the payload selects the unlocked
+   20% authority stage and authorizes it only when the target, GPS, IMU,
+   barometer, servos, logger, and physical arm input are ready. If guided testing
+   remains locked, the same button arms the neutral recorder only.
 5. Payload opens a new local log, records a configuration snapshot, and freezes
    target changes.
 6. Release detection uses IMU acceleration as a fast candidate and requires
    persistent barometric downward speed plus altitude loss for confirmation.
 7. Both brakes stay neutral for `GUIDED_DROP_DEPLOYMENT_NEUTRAL_MS`.
-8. Both brakes remain neutral until stable descent and low angular rate persist.
+8. Both brakes remain neutral until the payload automatically observes a canopy
+   loading signature and then confirms a separate stable-descent window with a
+   low angular rate. A suspected canopy signature alone cannot start guidance.
 9. GPS position, course, ground speed, target, barometer, IMU, and servos must
    remain valid through the navigation confirmation interval.
 10. Guidance begins with proportional, rate-limited, reversal-guarded steering,
@@ -144,8 +151,9 @@ The native test suite covers:
 - neutral return between commands and at completion;
 - start and in-motion interlocks;
 - disabled guided profile stays neutral;
-- fail-closed canopy, physical-arm, readiness, staged-authority, and two-command
-  arming gates;
+- fail-closed automatic canopy-event, physical-arm, readiness, and
+  staged-authority gates;
+- immediate one-command arming at the lowest unlocked 20% authority;
 - release and deployment-neutral gates;
 - stabilization, target, GPS course, and altitude gates;
 - limited nonzero steering only after all gates;
