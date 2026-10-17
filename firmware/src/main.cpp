@@ -1170,6 +1170,26 @@ void updateLoRaRemoteControl() {
             }
             break;
         }
+        case comms::LoRaRemoteCommandType::START_NEUTRAL_DROP_TEST: {
+            // This is a synchronized operator marker, not a manual release
+            // trigger. The recorder is already collecting pre-release data,
+            // and the payload still detects the physical drop automatically.
+            // No steering authority is granted and both servos stay neutral.
+            const bool accepted = vehicle.drop_test_recording &&
+                vehicle.drop_test_state == phoenix::DropTestState::ARMED_RECORDING &&
+                !vehicle.guided_drop_requested;
+            servos.emergencyNeutral();
+            if (accepted) {
+                vehicle.lora_remote_accepted_count++;
+                ring_buf.pushEvent("NEUTRAL_DROP_TEST_START_MARKER");
+                flash_log.logEvent("NEUTRAL_DROP_TEST_START_MARKER");
+            } else {
+                vehicle.lora_remote_rejected_count++;
+                ring_buf.pushEvent("NEUTRAL_DROP_TEST_START_REJECTED");
+                flash_log.logEvent("NEUTRAL_DROP_TEST_START_REJECTED");
+            }
+            break;
+        }
         case comms::LoRaRemoteCommandType::CONFIRM_CANOPY_READY: {
             servo_retract_test.stop();
             lora_tilt_stabilizer_requested = false;

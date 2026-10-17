@@ -31,7 +31,8 @@ enum class LoRaRemoteCommandType : uint8_t {
     START_SERVO_RETRACT_TEST = 13,
     ARM_GUIDED_DROP_TEST = 14,
     CONFIRM_CANOPY_READY = 15,
-    PREPARE_GUIDED_DROP_TEST = 16
+    PREPARE_GUIDED_DROP_TEST = 16,
+    START_NEUTRAL_DROP_TEST = 17
 };
 
 struct __attribute__((packed)) LoRaRemoteCommandPacket {
@@ -87,6 +88,7 @@ inline const char* loraRemoteCommandName(LoRaRemoteCommandType type) {
         case LoRaRemoteCommandType::ARM_GUIDED_DROP_TEST: return "ARM_GUIDED_DROP_TEST";
         case LoRaRemoteCommandType::CONFIRM_CANOPY_READY: return "CONFIRM_CANOPY_READY";
         case LoRaRemoteCommandType::PREPARE_GUIDED_DROP_TEST: return "PREPARE_GUIDED_DROP_TEST";
+        case LoRaRemoteCommandType::START_NEUTRAL_DROP_TEST: return "START_NEUTRAL_DROP_TEST";
     }
     return "UNKNOWN";
 }

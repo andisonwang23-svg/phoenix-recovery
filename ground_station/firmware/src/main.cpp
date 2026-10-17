@@ -770,6 +770,7 @@ void printHelp() {
     Serial.println("  ping");
     Serial.println("  status                      shows payload LoRa telemetry link");
     Serial.println("  armdrop                     immediately arm payload-owned drop recording");
+    Serial.println("  startneutral                mark the armed neutral test ready for release");
     Serial.println("  abortdrop                   abort drop recording and command neutral");
     Serial.println("  bench <1|2> <20|40>         timed unloaded prelaunch servo test");
     Serial.println("  retracttest                 automatic unloaded extend/retract cycle");
@@ -867,6 +868,11 @@ void handleLine(String line) {
     } else if (line == "armdrop") {
         stopTiltHold(true);
         sendCommand(comms::LoRaRemoteCommandType::ARM_DROP_TEST);
+    } else if (line == "startneutral") {
+        stopTiltHold(true);
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        sendCommand(comms::LoRaRemoteCommandType::START_NEUTRAL_DROP_TEST);
     } else if (line == "canopyready") {
         Serial.println("canopyready removed: payload canopy detection is automatic");
     } else if (line.startsWith("guidedprepare ")) {
@@ -1227,6 +1233,11 @@ void handleCommandApi() {
         manual_hold.active = false;
         manual_hold.bench_mode = false;
         ok = sendCommand(comms::LoRaRemoteCommandType::ARM_DROP_TEST);
+    } else if (type == "startneutral") {
+        stopTiltHold(true);
+        manual_hold.active = false;
+        manual_hold.bench_mode = false;
+        ok = sendCommand(comms::LoRaRemoteCommandType::START_NEUTRAL_DROP_TEST);
     } else if (type == "abortdrop") {
         stopTiltHold(true);
         manual_hold.active = false;
@@ -1489,6 +1500,8 @@ String htmlPage() {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#07100f">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <title>PHOENIX Ground Station</title>
 <style>
 :root{--bg:#07100f;--panel:#0c1817;--panel2:#101f1d;--line:#203a36;--text:#eef8f4;--muted:#91aaa4;--orange:#ff8b3d;--cyan:#36d4bd;--ok:#55dd91;--warn:#ffc857;--bad:#ff6b6b;--shadow:0 18px 50px #0007}
@@ -1499,8 +1512,9 @@ button,input,select{font:inherit}.shell{width:min(1400px,100%);margin:auto;paddi
 .health{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.sensor{padding:12px;border:1px solid var(--line);border-radius:12px;background:#07110f}.sensor b{display:block;font:800 12px ui-monospace,monospace;margin-top:5px}.sensor.good{border-color:#55dd9155}.sensor.fail{border-color:#ff6b6b55}.attitude{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.att{text-align:center;padding:12px 4px;background:#07110f;border-radius:11px}.att strong{display:block;font:800 18px ui-monospace,monospace;color:var(--cyan)}
 .servo{margin:13px 0}.servoTop{display:flex;justify-content:space-between;margin-bottom:7px}.track{height:9px;background:#07110f;border:1px solid var(--line);border-radius:99px;overflow:hidden}.fill{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--orange));transition:width .35s}.pulse{font:700 12px ui-monospace,monospace;color:var(--muted)}
 .notice{border-left:3px solid var(--warn);background:#ffc85710;padding:11px 12px;border-radius:4px 10px 10px 4px;color:#f9e6ae;font-size:12px;margin-bottom:13px}.buttonGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}button{appearance:none;border:1px solid #31514a;background:#142824;color:var(--text);border-radius:11px;padding:11px 12px;font-weight:850;cursor:pointer;transition:.15s}button:hover{transform:translateY(-1px);border-color:#52786f}button:active{transform:translateY(0)}button.primary{background:var(--orange);border-color:var(--orange);color:#1b0c03}button.neutral{background:var(--ok);border-color:var(--ok);color:#04150c}button.danger{color:#ff9a9a;border-color:#743f3f;background:#281414}button:disabled{opacity:.35;cursor:not-allowed;transform:none}.full{width:100%}.field{margin-top:10px}.field label,.slider label{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:6px}input[type=text],input[type=number],select{width:100%;border:1px solid var(--line);background:#07110f;color:var(--text);border-radius:10px;padding:11px 12px;outline:none}input:focus,select:focus{border-color:var(--cyan)}input[type=range]{width:100%;accent-color:var(--orange)}.slider{margin:12px 0}.status{min-height:20px;margin-top:10px;color:var(--muted);font-size:12px}.commandRow{display:flex;gap:8px;margin-top:10px}.commandRow button{flex:1}.footer{display:flex;justify-content:space-between;gap:12px;color:#637d77;font:700 10px ui-monospace,monospace;padding:14px 3px 2px}
+.quickRecovery{display:grid;grid-template-columns:1fr auto;align-items:center;gap:14px;padding:15px 16px;margin-bottom:14px;border:1px solid #ff8b3d88;border-radius:16px;background:linear-gradient(120deg,#2b160d,#0c1817 65%);box-shadow:var(--shadow)}.quickRecovery strong{display:block;font-size:20px}.quickRecovery .status{margin-top:3px}.quickRecovery button{min-width:220px}
 @media(max-width:950px){.mission{grid-template-columns:1fr 1fr}.layout{grid-template-columns:1fr 1fr}.span2{grid-column:span 2}}
-@media(max-width:620px){.shell{padding:12px}.top{align-items:flex-start}.topright .pill:first-child{display:none}.mission,.layout{grid-template-columns:1fr}.span2{grid-column:span 1}.mission>div{padding:14px}.health{grid-template-columns:1fr 1fr 1fr}.buttonGrid{grid-template-columns:1fr}.state{font-size:28px}.footer{display:block}.footer span{display:block;margin-top:4px}}
+@media(max-width:620px){.shell{padding:12px}.top{align-items:flex-start}.topright .pill:first-child{display:none}.mission,.layout{grid-template-columns:1fr}.span2{grid-column:span 1}.mission>div{padding:14px}.health{grid-template-columns:1fr 1fr 1fr}.buttonGrid{grid-template-columns:1fr}.state{font-size:28px}.footer{display:block}.footer span{display:block;margin-top:4px}.quickRecovery{grid-template-columns:1fr}.quickRecovery button{width:100%;min-width:0}}
 </style>
 </head>
 <body>
@@ -1509,6 +1523,11 @@ button,input,select{font:inherit}.shell{width:min(1400px,100%);margin:auto;paddi
     <div class="brand"><div class="mark">▲</div><div><div class="eyebrow">Recovery Operations</div><h1>PHOENIX Ground Station</h1></div></div>
     <div class="topright"><span id="agePill" class="pill">NO DATA</span><span id="linkPill" class="pill stale"><i class="dot"></i>STARTING</span></div>
   </header>
+
+  <section class="quickRecovery">
+    <div><span class="eyebrow">DROP TEST QUICK ACTION</span><strong>Automatic Recovery</strong><div id="quickArmStatus" class="status">Waiting for payload readiness.</div></div>
+    <button id="quickArmRecovery" class="primary" onclick="armAutomaticReturn()">Start Automatic Recovery</button>
+  </section>
 
   <section class="mission">
     <div><div class="stateLabel">Flight State</div><div id="flight" class="state">WAITING</div><div id="guidance" class="tiny">GUIDANCE DISABLED</div></div>
@@ -1569,9 +1588,9 @@ button,input,select{font:inherit}.shell{width:min(1400px,100%);margin:auto;paddi
       <div id="tiltStatus" class="status">Requires healthy IMU and barometer.</div>
     </article>
 
-    <article class="card">
+    <article id="dropTestCard" class="card">
       <div class="cardHead"><h2>Drop Test Recording</h2><span id="dropGate" class="tiny">PAYLOAD OWNED</span></div>
-      <div class="notice">Arm Neutral Drop Test starts the fail-neutral recorder immediately. Arm Automatic Return is a separate one-press request and remains calibration-locked until its physical arm, target, sensors, and 20% authority stage are ready. No visual canopy confirmation is used; automatic return stays neutral until release, canopy-load detection, and stable descent. Flare remains disabled.</div>
+      <div class="notice">Arm Neutral Drop Test starts a neutral-only recording. Start Automatic Recovery is the separate one-press guided-test request and remains calibration-locked until its physical arm, target, sensors, and 20% authority stage are ready. After it is accepted, the servos stay neutral until release, canopy-load detection, and stable descent. Flare remains disabled.</div>
       <div class="rows">
         <div class="row"><span class="k">Drop state</span><span id="dropState" class="v">--</span></div>
         <div class="row"><span class="k">Automatic return profile</span><span id="guidedDropState" class="v">--</span></div>
@@ -1586,7 +1605,9 @@ button,input,select{font:inherit}.shell{width:min(1400px,100%);margin:auto;paddi
         <div class="row"><span class="k">Payload time</span><span id="payloadTime" class="v">--</span></div>
         <div class="row"><span class="k">Event times</span><span id="dropTimes" class="v">--</span></div>
       </div>
-      <div class="commandRow"><button id="armDropButton" class="primary" onclick="armDrop()">Arm Neutral Drop Test</button><button id="armGuidedButton" onclick="armAutomaticReturn()">Arm Automatic Return</button></div>
+      <div class="commandRow"><button id="armDropButton" class="primary" onclick="armDrop()">Arm Neutral Drop Test</button><button id="startNeutralButton" onclick="startNeutralTest()" disabled>Start Neutral Test</button></div>
+      <div id="neutralStartStatus" class="status">Arm the neutral drop test first.</div>
+      <button id="armGuidedButton" class="primary full" onclick="armAutomaticReturn()">Start Automatic Recovery</button>
       <button class="danger full" onclick="abortDrop()">Abort And Neutral</button>
       <div class="commandRow"><button onclick="location.href='/drop-logs'">Open Saved CSV Logs</button><button onclick="requestLogIndex()">Request Payload Log Index</button></div>
       <div id="dropStatus" class="status">Waiting for payload telemetry.</div>
@@ -1626,6 +1647,10 @@ button,input,select{font:inherit}.shell{width:min(1400px,100%);margin:auto;paddi
 </main>
 
 <script>
+// Captive-network probes use several temporary paths. Keep the portal's
+// address on the real dashboard so reopening or refreshing never lands on a
+// probe URL or the separate log viewer.
+if(location.pathname!=='/')history.replaceState(null,'','/?portal=1');
 const el=id=>document.getElementById(id);
 let dropRecordingActive=false;
 let armWaitUntil=0;
@@ -1635,9 +1660,13 @@ let pendingBench='';
 let pendingBenchUntil=0;
 let benchMessageUntil=0;
 let lastRetractStatus='';
+let lastRemoteAccepted=0;
 let lastRemoteRejected=0;
 let armRejectBaseline=0;
 let armRequestLabel='';
+let neutralStartWaitUntil=0;
+let neutralStartAcceptedBaseline=0;
+let neutralStartRejectedBaseline=0;
 async function api(path){
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),3000);
@@ -1683,7 +1712,8 @@ function automaticRetractTest(){
 function startTilt(){if(dropLocked('tiltStatus'))return;if(confirm('Hold the payload upright and clear the servo/linkage area. Start a 15-second, 15%-maximum roll-damping test?'))command('type=tiltstart','tiltStatus')}
 function stopTilt(){command('type=tiltstop','tiltStatus')}
 function armDrop(){armRejectBaseline=lastRemoteRejected;armRequestLabel='Neutral drop test';command('type=armdrop','dropStatus')}
-function armAutomaticReturn(){armRejectBaseline=lastRemoteRejected;armRequestLabel='Automatic return';command('type=guidedarm','dropStatus')}
+function startNeutralTest(){neutralStartAcceptedBaseline=lastRemoteAccepted;neutralStartRejectedBaseline=lastRemoteRejected;neutralStartWaitUntil=Date.now()+6500;command('type=startneutral','neutralStartStatus')}
+function armAutomaticReturn(){armRejectBaseline=lastRemoteRejected;armRequestLabel='Automatic return';command('type=guidedarm','quickArmStatus')}
 function abortDrop(){if(confirm('Abort drop recording and command neutral?'))command('type=abortdrop','dropStatus')}
 function requestLogIndex(){command('type=logindex','dropStatus')}
 function disableRemote(){ if(confirm('Disable rocket LoRa remote control until rocket reboot?')) command('type=disable') }
@@ -1739,6 +1769,9 @@ async function refresh(){
     // blockers, while the payload remains responsible for every safety gate.
     el('armDropButton').disabled=dropRecordingActive;
     el('armGuidedButton').disabled=dropRecordingActive;
+    el('quickArmRecovery').disabled=dropRecordingActive;
+    const neutralStartReady=dropRecordingActive&&t.drop_test_state==='ARMED_RECORDING'&&t.guided_authority_percent===0;
+    el('startNeutralButton').disabled=!neutralStartReady;
     el('dropArmReady').textContent=neutralArmBlockers.length?('LOCKED · '+neutralArmBlockers.join(', ')):'NEUTRAL TEST READY';
     el('dropArmReady').className='v '+(neutralArmBlockers.length?'bad':'ok');
     const launchRecovery=['ASCENT','APOGEE_DETECT','APOGEE_CONFIRMED','DEPLOYMENT_WAIT','PARAFOIL_STABILIZATION','GUIDED_DESCENT','FINAL_APPROACH','FLARE'].includes(t.flight_state);
@@ -1746,10 +1779,18 @@ async function refresh(){
     el('payloadTime').textContent=t.payload_time_ms?(t.payload_time_ms+' ms onboard'):'--';
     el('dropTimes').textContent='payload ms: arm '+(t.drop_test_armed_ms||'--')+' · release '+(t.drop_test_release_ms||'--')+' · canopy signature '+(t.drop_test_canopy_ms||'--')+' · stable '+(t.drop_test_stable_ms||'--')+' · landing '+(t.drop_test_landing_ms||'--');
     el('dropGate').textContent=t.drop_test_neutral_lock?'NEUTRAL LOCK':'PAYLOAD OWNED';el('dropGate').className='tiny '+(t.drop_test_recording?'ok':'warn');
-    if(t.drop_test_recording){armWaitUntil=0;el('dropStatus').textContent='Payload accepted '+(t.guided_drop_status==='DISABLED'?'the neutral drop test':'automatic return')+'. High-rate payload log and ground CSV are recording.';}
-    else if(Date.now()<armWaitUntil&&t.remote_rejected_count>armRejectBaseline){armWaitUntil=0;const b=armRequestLabel==='Automatic return'?guidedBlockers:neutralArmBlockers;el('dropStatus').textContent=armRequestLabel+' rejected by payload'+(b.length?(': '+b.join(', ')):'.');}
-    else if(Date.now()<armWaitUntil){const b=armRequestLabel==='Automatic return'?guidedBlockers:neutralArmBlockers;el('dropStatus').textContent=b.length?('Arm request sent; check '+b.join(', ')+'.'):'Arm request sent; waiting for payload acceptance.';}
-    else{el('dropStatus').textContent='Drop recorder idle or closed.';}
+    if(t.drop_test_recording){armWaitUntil=0;el('dropStatus').textContent='Payload accepted '+(t.guided_authority_percent===0?'the neutral drop test':'automatic recovery')+'. High-rate payload log and ground CSV are recording.';el('quickArmStatus').textContent='ACTIVE · payload and ground logs recording';}
+    else if(Date.now()<armWaitUntil&&t.remote_rejected_count>armRejectBaseline){armWaitUntil=0;const b=armRequestLabel==='Automatic return'?guidedBlockers:neutralArmBlockers;const msg=armRequestLabel+' rejected by payload'+(b.length?(': '+b.join(', ')):'.');el('dropStatus').textContent=msg;el('quickArmStatus').textContent=msg;}
+    else if(Date.now()<armWaitUntil){const b=armRequestLabel==='Automatic return'?guidedBlockers:neutralArmBlockers;const msg=b.length?('Arm request sent; check '+b.join(', ')+'.'):'Arm request sent; waiting for payload acceptance.';el('dropStatus').textContent=msg;el('quickArmStatus').textContent=msg;}
+    else{el('dropStatus').textContent='Drop recorder idle or closed.';el('quickArmStatus').textContent=guidedBlockers.length?('LOCKED · '+guidedBlockers.join(', ')):'READY TO ARM';}
+    if(neutralStartWaitUntil&&t.remote_accepted_count>neutralStartAcceptedBaseline){neutralStartWaitUntil=0;el('neutralStartStatus').textContent='Payload recorded the neutral-test start marker. Release detection is automatic; servos remain neutral.';}
+    else if(neutralStartWaitUntil&&t.remote_rejected_count>neutralStartRejectedBaseline){neutralStartWaitUntil=0;el('neutralStartStatus').textContent='Payload rejected Start Neutral Test. Arm the neutral recorder and wait for ARMED_RECORDING.';}
+    else if(neutralStartWaitUntil&&Date.now()<neutralStartWaitUntil){el('neutralStartStatus').textContent='Start marker sent; waiting for payload confirmation.';}
+    else if(neutralStartWaitUntil){neutralStartWaitUntil=0;el('neutralStartStatus').textContent='No payload confirmation received. Do not release; verify the LoRa link and arm state.';}
+    else if(neutralStartReady){el('neutralStartStatus').textContent='ARMED_RECORDING · press Start Neutral Test immediately before release.';}
+    else if(dropRecordingActive){el('neutralStartStatus').textContent='Release detection has begun automatically; neutral steering lock remains active.';}
+    else{el('neutralStartStatus').textContent='Arm the neutral drop test first.';}
+    lastRemoteAccepted=t.remote_accepted_count;
     lastRemoteRejected=t.remote_rejected_count;
     el('failsafe').textContent=t.failsafe==='NONE'?'FAILSAFE CLEAR':'FAILSAFE '+t.failsafe;el('failsafe').className='tiny '+(t.failsafe==='NONE'?'ok':'bad');
     el('roll').textContent=num(t.roll_deg)+'°';el('pitch').textContent=num(t.pitch_deg)+'°';el('yaw').textContent=num(t.yaw_deg)+'°';
