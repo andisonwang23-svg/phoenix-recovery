@@ -1,5 +1,6 @@
 #include <unity.h>
 
+#include "../../firmware/src/config.h"
 #include "logic/guided_drop_controller.h"
 #include "../../firmware/src/logic/guidance_logic.cpp"
 #include "../../firmware/src/logic/guided_drop_controller.cpp"
@@ -71,6 +72,14 @@ void disabled_profile_is_always_neutral() {
     TEST_ASSERT_FALSE(out.available);
     TEST_ASSERT_TRUE(out.neutral_required);
     TEST_ASSERT_FALSE(out.active);
+}
+
+void simulator_build_removes_only_the_75m_activation_floor() {
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f,
+                             cfg::GUIDED_DROP_BUILD_MIN_ACTIVATION_ALTITUDE_M);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 75.0f,
+                             cfg::GUIDED_DROP_MIN_ACTIVATION_ALTITUDE_M);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 12.0f, cfg::MIN_GUIDANCE_ALTITUDE_M);
 }
 
 void release_and_deployment_delay_are_neutral() {
@@ -237,6 +246,7 @@ void landing_or_abort_always_neutralizes() {
 int main() {
     UNITY_BEGIN();
     RUN_TEST(disabled_profile_is_always_neutral);
+    RUN_TEST(simulator_build_removes_only_the_75m_activation_floor);
     RUN_TEST(release_and_deployment_delay_are_neutral);
     RUN_TEST(stability_navigation_and_altitude_gate_guidance);
     RUN_TEST(guidance_produces_a_limited_nonzero_brake_command);

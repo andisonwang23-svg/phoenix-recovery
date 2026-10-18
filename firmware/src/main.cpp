@@ -127,7 +127,8 @@ static logic::GuidedDropConfig guidedDropConfig() {
     c.navigation_confirm_ms = cfg::GUIDED_DROP_NAV_CONFIRM_MS;
     c.navigation_loss_latch_ms = cfg::GUIDED_DROP_NAV_LOSS_LATCH_MS;
     c.sensor_max_age_ms = cfg::SENSOR_TIMEOUT_MS;
-    c.min_activation_altitude_m = cfg::GUIDED_DROP_MIN_ACTIVATION_ALTITUDE_M;
+    c.min_activation_altitude_m =
+        cfg::GUIDED_DROP_BUILD_MIN_ACTIVATION_ALTITUDE_M;
     c.max_activation_angular_rate_dps = cfg::GUIDED_DROP_MAX_ACTIVATION_GYRO_DPS;
     c.reduced_authority_angular_rate_dps = cfg::GUIDED_DROP_MAX_ACTIVATION_GYRO_DPS;
     c.neutral_angular_rate_dps = cfg::GUIDED_DROP_NEUTRAL_GYRO_DPS;

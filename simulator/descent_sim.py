@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from math import atan2,cos,hypot,radians,sin
 import json, random
+SIMULATOR_ACTIVATION_ALTITUDE_M = 0.0
 @dataclass
 class Case:
  name:str; wind_e:float=0; wind_n:float=0; gps_loss:tuple|None=None; gust:tuple|None=None; target_m:tuple=(0,500); altitude:float=500
@@ -16,7 +17,9 @@ def run(c:Case):
   if c.gust and c.gust[0]<=t<=c.gust[1]: de+=c.gust[2]
   bearing=(atan2(c.target_m[0]-x,c.target_m[1]-y)*180/3.14159265)%360
   err=wrap(bearing-hdg); errors.append(err)
-  desired=max(-.8,min(.8,.02*err)) if gps and z>12 else 0
+  # The fixed 75 m activation floor is intentionally absent in simulation.
+  # Sensor, reachability, command-limit and fault behavior are still modeled.
+  desired=max(-.8,min(.8,.02*err)) if gps and z>=SIMULATOR_ACTIVATION_ALTITUDE_M else 0
   if hypot(c.target_m[0]-x,c.target_m[1]-y)>z*3: desired=max(-.35,min(.35,desired))
   delta=max(-.05,min(.05,desired-cmd)); cmd+=delta
   if not gps and abs(cmd)>.2: gps_loss_safe=False

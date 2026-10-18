@@ -233,6 +233,9 @@ static String drop_log_last_error;
 static uint32_t drop_log_rows = 0;
 static uint32_t drop_log_write_errors = 0;
 
+static constexpr char DROP_LOG_CSV_HEADER[] =
+    "record_type,ground_rx_ms,payload_time_ms,packet_sequence,drop_test_id,drop_test_state,drop_test_recording,flight_state,guidance_mode,failsafe,latitude,longitude,altitude_agl_m,vertical_speed_mps,ground_speed_mps,gps_course_deg,target_bearing_deg,heading_error_deg,distance_to_target_m,servo1_cmd,servo2_cmd,servo1_us,servo2_us,servo1_turn_deg,servo2_turn_deg,roll_deg,pitch_deg,yaw_deg,angular_rate_dps,satellites,satellites_in_view,gps_valid,gps_nmea_active,gps_age_ms,imu_valid,imu_age_ms,baro_valid,baro_age_ms,battery_voltage_v,battery_voltage_valid,servo_rail_voltage_v,servo_rail_voltage_valid,configuration_version,rssi_dbm,snr_db,drop_armed_ms,drop_release_ms,drop_canopy_ms,drop_stable_ms,drop_landing_ms,guided_drop_status,guided_authority_percent,guided_active,neutral_lock";
+
 bool isDropLogFilename(const String& filename) {
     String name = filename;
     if (name.startsWith("/")) name.remove(0, 1);
@@ -276,7 +279,7 @@ bool startGroundDropLog(uint16_t test_id) {
         recordDropLogWriteError("could not create " + path);
         return false;
     }
-    file.println("record_type,ground_rx_ms,payload_time_ms,packet_sequence,drop_test_id,drop_test_state,drop_test_recording,flight_state,guidance_mode,failsafe,latitude,longitude,altitude_agl_m,vertical_speed_mps,ground_speed_mps,gps_course_deg,target_bearing_deg,heading_error_deg,distance_to_target_m,servo1_cmd,servo2_cmd,servo1_us,servo2_us,servo1_turn_deg,servo2_turn_deg,roll_deg,pitch_deg,yaw_deg,angular_rate_dps,satellites,satellites_in_view,gps_valid,gps_nmea_active,gps_age_ms,imu_valid,imu_age_ms,baro_valid,baro_age_ms,battery_voltage_v,battery_voltage_valid,servo_rail_voltage_v,servo_rail_voltage_valid,configuration_version,rssi_dbm,snr_db,drop_armed_ms,drop_release_ms,drop_canopy_ms,drop_stable_ms,drop_landing_ms,guided_drop_status,guided_authority_percent,guided_active,neutral_lock");
+    file.println(DROP_LOG_CSV_HEADER);
     const bool write_ok = file && file.getWriteError() == 0;
     file.close();
     if (!write_ok) {
@@ -295,7 +298,8 @@ bool startGroundDropLog(uint16_t test_id) {
     return true;
 }
 
-bool appendGroundDropTelemetry(const TelemetrySnapshot& sample) {
+bool appendGroundDropTelemetry(const TelemetrySnapshot& sample,
+                               const char* record_type = "TELEMETRY") {
     if (!drop_log_active || drop_log_filename.isEmpty()) return false;
 
     File file = SPIFFS.open(drop_log_filename, FILE_APPEND);
@@ -312,7 +316,8 @@ bool appendGroundDropTelemetry(const TelemetrySnapshot& sample) {
         return false;
     }
 
-    file.printf("TELEMETRY,%lu,%lu,%u,%u,%s,%u,%s,%s,%s,",
+    file.printf("%s,%lu,%lu,%u,%u,%s,%u,%s,%s,%s,",
+                record_type,
                 static_cast<unsigned long>(sample.rx_ms),
                 static_cast<unsigned long>(sample.payload_time_ms),
                 sample.sequence,
@@ -370,6 +375,162 @@ bool appendGroundDropTelemetry(const TelemetrySnapshot& sample) {
     return true;
 }
 
+bool installSimulatedDropLog() {
+    static constexpr char PATH[] = "/drop_SIM.csv";
+    static constexpr char VERSION_PATH[] = "/drop_SIM_v2.ok";
+    static constexpr char LEGACY_PATH[] =
+        "/drop_SIM_5FT_NOT_REAL.csv";
+    if (!drop_log_storage_ok) {
+        recordDropLogWriteError("cannot install simulated log: storage unavailable");
+        return false;
+    }
+    if (drop_log_active) {
+        recordDropLogWriteError("cannot install simulated log while recording");
+        return false;
+    }
+    if (SPIFFS.exists(PATH) && SPIFFS.exists(VERSION_PATH)) {
+        Serial.println("Dashboard simulator-v2 log already installed as drop_SIM.csv");
+        return true;
+    }
+    // These names are reserved exclusively for generated simulation fixtures.
+    // Refreshing them cannot remove any real numbered drop-test record.
+    if (SPIFFS.exists(PATH)) SPIFFS.remove(PATH);
+    if (SPIFFS.exists(LEGACY_PATH)) SPIFFS.remove(LEGACY_PATH);
+    if (SPIFFS.exists(VERSION_PATH)) SPIFFS.remove(VERSION_PATH);
+
+    File file = SPIFFS.open(PATH, FILE_WRITE);
+    if (!file) {
+        recordDropLogWriteError("could not create dashboard simulation log");
+        return false;
+    }
+    file.println(DROP_LOG_CSV_HEADER);
+    const bool header_ok = file && file.getWriteError() == 0;
+    file.close();
+    if (!header_ok) {
+        SPIFFS.remove(PATH);
+        recordDropLogWriteError("dashboard simulation log header failed");
+        return false;
+    }
+
+    struct SimulatedPoint {
+        uint32_t payload_ms;
+        phoenix::DropTestState drop_state;
+        bool recording;
+        logic::FlightState flight_state;
+        float altitude_m;
+        float vertical_speed_mps;
+        float ground_speed_mps;
+        float roll_deg;
+        float pitch_deg;
+        float yaw_deg;
+        float angular_rate_dps;
+        logic::GuidedDropStatus guided_status;
+        int16_t rssi_dbm;
+        float snr_db;
+    };
+
+    static const SimulatedPoint points[] = {
+        {10000, phoenix::DropTestState::ARMED_RECORDING, true, logic::FlightState::PAD_SAFE, 1.52f, 0.00f, 0.00f, 0.5f, -0.3f, 90.0f, 1.2f, logic::GuidedDropStatus::WAITING_RELEASE, -45, 12.0f},
+        {10100, phoenix::DropTestState::RELEASE_CANDIDATE, true, logic::FlightState::PAD_SAFE, 1.50f, -0.30f, 0.02f, 1.2f, -0.8f, 91.0f, 4.5f, logic::GuidedDropStatus::WAITING_RELEASE, -45, 12.0f},
+        {10200, phoenix::DropTestState::RELEASE_CANDIDATE, true, logic::FlightState::PAD_SAFE, 1.45f, -0.80f, 0.03f, 2.0f, -1.2f, 92.0f, 7.0f, logic::GuidedDropStatus::WAITING_RELEASE, -46, 11.8f},
+        {10300, phoenix::DropTestState::RELEASE_CANDIDATE, true, logic::FlightState::PAD_SAFE, 1.30f, -1.80f, 0.04f, 3.0f, -2.0f, 94.0f, 10.0f, logic::GuidedDropStatus::WAITING_RELEASE, -46, 11.8f},
+        {10400, phoenix::DropTestState::RELEASE_CANDIDATE, true, logic::FlightState::PAD_SAFE, 1.00f, -2.90f, 0.05f, 4.0f, -3.0f, 96.0f, 13.0f, logic::GuidedDropStatus::WAITING_RELEASE, -46, 11.6f},
+        {10500, phoenix::DropTestState::RELEASE_CANDIDATE, true, logic::FlightState::PAD_SAFE, 0.55f, -4.20f, 0.06f, 5.5f, -4.5f, 99.0f, 17.0f, logic::GuidedDropStatus::WAITING_RELEASE, -47, 11.5f},
+        {10600, phoenix::DropTestState::DROP_CONFIRMED, true, logic::FlightState::PAD_SAFE, 0.02f, -5.30f, 0.07f, 8.0f, -7.0f, 104.0f, 32.0f, logic::GuidedDropStatus::DEPLOYMENT_NEUTRAL, -47, 11.4f},
+        {10800, phoenix::DropTestState::CANOPY_EVENT_SUSPECTED, true, logic::FlightState::PAD_SAFE, 0.01f, 0.40f, 0.10f, 10.0f, -9.0f, 110.0f, 45.0f, logic::GuidedDropStatus::DEPLOYMENT_NEUTRAL, -48, 11.0f},
+        {11200, phoenix::DropTestState::LANDING_CONFIRM, true, logic::FlightState::PAD_SAFE, 0.02f, 0.08f, 0.10f, 2.0f, -1.5f, 111.0f, 5.0f, logic::GuidedDropStatus::DEPLOYMENT_NEUTRAL, -47, 11.2f},
+        {12200, phoenix::DropTestState::LANDING_CONFIRM, true, logic::FlightState::PAD_SAFE, 0.02f, 0.03f, 0.05f, 0.8f, -0.4f, 111.0f, 2.5f, logic::GuidedDropStatus::WAITING_STABLE_DESCENT, -46, 11.5f},
+        {13200, phoenix::DropTestState::LANDING_CONFIRM, true, logic::FlightState::PAD_SAFE, 0.01f, 0.01f, 0.02f, 0.4f, -0.2f, 111.0f, 1.2f, logic::GuidedDropStatus::WAITING_STABLE_DESCENT, -46, 11.6f},
+        {14200, phoenix::DropTestState::LANDING_CONFIRM, true, logic::FlightState::PAD_SAFE, 0.01f, 0.00f, 0.01f, 0.3f, -0.1f, 111.0f, 0.8f, logic::GuidedDropStatus::WAITING_STABLE_DESCENT, -45, 11.8f},
+        {15200, phoenix::DropTestState::LANDING_CONFIRM, true, logic::FlightState::PAD_SAFE, 0.01f, 0.00f, 0.00f, 0.2f, -0.1f, 111.0f, 0.5f, logic::GuidedDropStatus::WAITING_STABLE_DESCENT, -45, 12.0f},
+        {16200, phoenix::DropTestState::POST_LANDING, true, logic::FlightState::LANDED, 0.01f, 0.00f, 0.00f, 0.1f, 0.0f, 111.0f, 0.3f, logic::GuidedDropStatus::LANDED, -45, 12.1f},
+        {17200, phoenix::DropTestState::POST_LANDING, true, logic::FlightState::LANDED, 0.01f, 0.00f, 0.00f, 0.1f, 0.0f, 111.0f, 0.2f, logic::GuidedDropStatus::LANDED, -45, 12.1f},
+        {20200, phoenix::DropTestState::POST_LANDING, true, logic::FlightState::LANDED, 0.01f, 0.00f, 0.00f, 0.1f, 0.0f, 111.0f, 0.2f, logic::GuidedDropStatus::LANDED, -45, 12.1f},
+        {25200, phoenix::DropTestState::POST_LANDING, true, logic::FlightState::LANDED, 0.01f, 0.00f, 0.00f, 0.1f, 0.0f, 111.0f, 0.2f, logic::GuidedDropStatus::LANDED, -45, 12.1f},
+        {26200, phoenix::DropTestState::TEST_COMPLETE, false, logic::FlightState::LANDED, 0.01f, 0.00f, 0.00f, 0.1f, 0.0f, 111.0f, 0.2f, logic::GuidedDropStatus::LANDED, -45, 12.1f},
+    };
+
+    drop_log_filename = PATH;
+    drop_log_active = true;
+    drop_log_rows = 0;
+    drop_log_last_error = "";
+    drop_log_last_close_reason = "SIMULATED_DATA";
+
+    for (size_t i = 0; i < sizeof(points) / sizeof(points[0]); ++i) {
+        const SimulatedPoint& point = points[i];
+        TelemetrySnapshot sample;
+        sample.valid = true;
+        sample.rx_ms = point.payload_ms + 50;
+        sample.payload_time_ms = point.payload_ms;
+        sample.sequence = static_cast<uint8_t>(i + 1);
+        sample.flight_state = point.flight_state;
+        sample.guidance_mode = logic::GuidanceMode::MODE_DISABLED;
+        sample.failsafe_code = logic::FailCode::FAIL_NONE;
+        sample.latitude = 40.7436240;
+        sample.longitude = -73.8105310;
+        sample.altitude_agl_m = point.altitude_m;
+        sample.vertical_speed_mps = point.vertical_speed_mps;
+        sample.ground_speed_mps = point.ground_speed_mps;
+        sample.gps_course_deg = 8.0f;
+        sample.target_bearing_deg = 18.0f;
+        sample.heading_error_deg = 10.0f;
+        sample.distance_to_target_m = 30.0f;
+        sample.servo1_cmd = 0.0f;
+        sample.servo2_cmd = 0.0f;
+        sample.servo1_us = 1500;
+        sample.servo2_us = 1500;
+        sample.roll_deg = point.roll_deg;
+        sample.pitch_deg = point.pitch_deg;
+        sample.yaw_deg = point.yaw_deg;
+        sample.angular_rate_dps = point.angular_rate_dps;
+        sample.satellites = 10;
+        sample.satellites_in_view = 14;
+        sample.gps_valid = true;
+        sample.gps_nmea_active = true;
+        sample.gps_age_ms = 80;
+        sample.imu_valid = true;
+        sample.imu_age_ms = 10;
+        sample.baro_valid = true;
+        sample.baro_age_ms = 10;
+        sample.configuration_version = UINT16_MAX;
+        sample.rssi = point.rssi_dbm;
+        sample.snr = point.snr_db;
+        sample.drop_test_state = point.drop_state;
+        sample.drop_test_recording = point.recording;
+        sample.drop_test_neutral_lock = true;
+        sample.drop_test_id = 9005;
+        sample.drop_test_armed_ms = 10000;
+        sample.drop_test_release_ms = point.payload_ms >= 10600 ? 10600 : 0;
+        sample.drop_test_canopy_ms = point.payload_ms >= 10800 ? 10800 : 0;
+        sample.drop_test_landing_ms = point.payload_ms >= 16200 ? 16200 : 0;
+        sample.payload_armed = point.recording;
+        sample.servo_healthy = true;
+        sample.guided_drop_status = point.guided_status;
+        sample.guided_authority_percent = 20;
+        sample.guided_active = false;
+        sample.guided_profile_unlock_flags = 7;
+        if (!appendGroundDropTelemetry(sample, "SIMULATED_TELEMETRY")) {
+            drop_log_active = false;
+            SPIFFS.remove(PATH);
+            recordDropLogWriteError("dashboard simulation log row failed");
+            return false;
+        }
+    }
+
+    drop_log_active = false;
+    drop_log_last_close_reason = "SIMULATED_DATA";
+    File version_file = SPIFFS.open(VERSION_PATH, FILE_WRITE);
+    if (version_file) {
+        version_file.println("simulator_activation_floor_m=0");
+        version_file.close();
+    } else {
+        recordDropLogWriteError("could not write simulator-v2 marker");
+    }
+    Serial.printf("Installed dashboard simulation log: %s rows=%lu\n",
+                  PATH, static_cast<unsigned long>(drop_log_rows));
+    return true;
+}
+
 void updateAutomaticDropLog(const TelemetrySnapshot& sample) {
     logic::DropLogObservation observation;
     observation.test_id = sample.drop_test_id;
@@ -406,6 +567,9 @@ void setupDropLogStorage() {
     Serial.printf("Ground drop-log storage ready: used=%u total=%u bytes\n",
                   static_cast<unsigned>(SPIFFS.usedBytes()),
                   static_cast<unsigned>(SPIFFS.totalBytes()));
+    // Install the explicitly labeled synthetic fixture once. Existing files,
+    // including real drop records, are never replaced or erased.
+    installSimulatedDropLog();
 }
 
 struct ManualHold {
@@ -769,6 +933,7 @@ void printHelp() {
     Serial.println("  help");
     Serial.println("  ping");
     Serial.println("  status                      shows payload LoRa telemetry link");
+    Serial.println("  installsim                  add labeled drop_SIM CSV to dashboard logs");
     Serial.println("  armdrop                     immediately arm payload-owned drop recording");
     Serial.println("  startneutral                mark the armed neutral test ready for release");
     Serial.println("  abortdrop                   abort drop recording and command neutral");
@@ -840,6 +1005,11 @@ void handleLine(String line) {
         printHelp();
     } else if (line == "status") {
         printLinkStatus();
+    } else if (line == "installsim") {
+        const bool installed = installSimulatedDropLog();
+        Serial.println(installed
+            ? "drop_SIM.csv is installed as simulated dashboard data"
+            : "Failed to install drop_SIM.csv");
     } else if (line.startsWith("bench ")) {
         if (telemetry.drop_test_recording) {
             Serial.println("bench test locked while drop recording is active");
