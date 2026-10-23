@@ -1,0 +1,344 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#e9eff6"/>
+    </linearGradient>
+    <linearGradient id="tube" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#64748b"/>
+      <stop offset="0.08" stop-color="#e2e8f0"/>
+      <stop offset="0.30" stop-color="#ffffff"/>
+      <stop offset="0.72" stop-color="#f8fafc"/>
+      <stop offset="0.92" stop-color="#cbd5e1"/>
+      <stop offset="1" stop-color="#475569"/>
+    </linearGradient>
+    <linearGradient id="nose" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#334155"/>
+      <stop offset="0.18" stop-color="#dbe4ee"/>
+      <stop offset="0.55" stop-color="#ffffff"/>
+      <stop offset="0.86" stop-color="#94a3b8"/>
+      <stop offset="1" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="battery" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="1" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="motor" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="0.5" stop-color="#64748b"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="canopy" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ef4444"/>
+      <stop offset="0.55" stop-color="#dc2626"/>
+      <stop offset="1" stop-color="#991b1b"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#0f172a" flood-opacity="0.20"/>
+    </filter>
+    <pattern id="weave" width="8" height="8" patternUnits="userSpaceOnUse">
+      <path d="M0 0L8 8M8 0L0 8" stroke="#fecaca" stroke-width="0.7" opacity="0.45"/>
+    </pattern>
+    <marker id="arrowOrange" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L11 5L0 10Z" fill="#f97316"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L11 5L0 10Z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L11 5L0 10Z" fill="#dc2626"/>
+    </marker>
+    <marker id="leader" markerWidth="10" markerHeight="10" refX="9" refY="4" orient="auto">
+      <path d="M0 0L10 4L0 8Z" fill="#475569"/>
+    </marker>
+    <style>
+      .title{font:700 39px Arial,sans-serif;fill:#0f172a;letter-spacing:1px}
+      .subtitle{font:19px Arial,sans-serif;fill:#475569}
+      .panel-title{font:700 24px Arial,sans-serif;fill:#0f172a}
+      .section{font:700 15px Arial,sans-serif;fill:#0f172a;letter-spacing:.4px}
+      .label{font:700 16px Arial,sans-serif;fill:#0f172a}
+      .small{font:14px Arial,sans-serif;fill:#334155}
+      .tiny{font:12px Arial,sans-serif;fill:#475569}
+      .white{fill:#fff}
+      .panel{fill:#fff;stroke:#cbd5e1;stroke-width:2.5}
+      .callout{fill:#fff;stroke:#94a3b8;stroke-width:1.8}
+      .leader{fill:none;stroke:#475569;stroke-width:1.8;marker-end:url(#leader)}
+      .gas{fill:none;stroke:#f97316;stroke-width:8;stroke-linecap:round;marker-end:url(#arrowOrange)}
+      .load{fill:none;stroke:#2563eb;stroke-width:7;stroke-linecap:round;marker-end:url(#arrowBlue)}
+      .brake{fill:none;stroke:#7c3aed;stroke-width:4;stroke-linecap:round}
+      .tether{fill:none;stroke:#dc2626;stroke-width:5;stroke-linecap:round}
+      .num{font:700 14px Arial,sans-serif;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+    </style>
+  </defs>
+
+  <rect width="1800" height="1200" fill="url(#bg)"/>
+  <text x="900" y="52" text-anchor="middle" class="title">PHOENIX NOSE-ONLY PARAFOIL DEPLOYMENT</text>
+  <text x="900" y="82" text-anchor="middle" class="subtitle">TTV-inspired protected gas bypass • intact airframe • structural parafoil load path • isolated battery bay</text>
+
+  <!-- Main cutaway panel -->
+  <rect x="35" y="110" width="1120" height="985" rx="20" class="panel" filter="url(#shadow)"/>
+  <text x="595" y="150" text-anchor="middle" class="panel-title">FLIGHT CONFIGURATION — BODY REMAINS ONE STRUCTURE</text>
+
+  <!-- Rocket shadow -->
+  <ellipse cx="596" cy="1053" rx="190" ry="24" fill="#0f172a" opacity="0.12"/>
+
+  <!-- Nose cone -->
+  <path d="M455 286C468 230 503 177 575 157C646 179 683 231 696 286Z" fill="url(#nose)" stroke="#1e293b" stroke-width="5"/>
+  <path d="M480 281C494 235 525 199 575 181C625 199 657 236 671 281Z" fill="#f8fafc" opacity="0.72"/>
+  <path d="M455 286H696" stroke="#0f172a" stroke-width="5"/>
+  <path d="M487 286V325M664 286V325" stroke="#475569" stroke-width="5"/>
+  <path d="M487 304H664" stroke="#94a3b8" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="575" y="267" text-anchor="middle" class="section">TETHERED SLIP-FIT NOSE</text>
+
+  <!-- Main continuous tube -->
+  <path d="M430 315H720V1008Q575 1044 430 1008Z" fill="url(#tube)" stroke="#1e293b" stroke-width="6"/>
+  <path d="M453 315H697V995Q575 1020 453 995Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+  <path d="M430 315V1008M720 315V1008" stroke="#0f172a" stroke-width="5"/>
+  <path d="M448 315V1004M702 315V1004" stroke="#cbd5e1" stroke-width="8"/>
+
+  <!-- Recovery bay -->
+  <rect x="456" y="321" width="238" height="226" rx="7" fill="#fff7ed" stroke="#fb923c" stroke-width="2"/>
+  <text x="575" y="342" text-anchor="middle" class="section">FORWARD RECOVERY BAY</text>
+
+  <!-- Folded parafoil pack -->
+  <path d="M487 366Q575 339 663 366L650 429Q575 449 500 429Z" fill="url(#canopy)" stroke="#7f1d1d" stroke-width="3"/>
+  <path d="M487 366Q575 339 663 366L650 429Q575 449 500 429Z" fill="url(#weave)"/>
+  <path d="M513 377Q575 360 637 377M509 395Q575 378 641 395M505 413Q575 397 645 413" fill="none" stroke="#fecaca" stroke-width="2" opacity="0.8"/>
+  <rect x="479" y="352" width="192" height="90" rx="18" fill="none" stroke="#991b1b" stroke-width="3" stroke-dasharray="10 5"/>
+  <text x="575" y="463" text-anchor="middle" class="small">Parafoil inside deployment sleeve</text>
+
+  <!-- Ordered line stows -->
+  <path d="M504 472C535 454 551 491 578 472S620 490 649 472" fill="none" stroke="#2563eb" stroke-width="4"/>
+  <path d="M504 486C535 468 551 505 578 486S620 504 649 486" fill="none" stroke="#2563eb" stroke-width="4"/>
+  <path d="M504 500C535 482 551 519 578 500S620 518 649 500" fill="none" stroke="#2563eb" stroke-width="4"/>
+  <path d="M478 514H672L657 535H493Z" fill="#fed7aa" stroke="#c2410c" stroke-width="3"/>
+  <text x="575" y="530" text-anchor="middle" class="tiny">flame-resistant protector</text>
+
+  <!-- Structural anchor bulkhead -->
+  <rect x="454" y="548" width="242" height="31" rx="5" fill="#334155" stroke="#0f172a" stroke-width="3"/>
+  <path d="M484 579V596M666 579V596" stroke="#2563eb" stroke-width="8"/>
+  <path d="M512 548Q575 506 638 548" fill="none" stroke="#2563eb" stroke-width="7"/>
+  <circle cx="575" cy="548" r="13" fill="#dbeafe" stroke="#1d4ed8" stroke-width="5"/>
+  <text x="575" y="569" text-anchor="middle" class="white" style="font:700 13px Arial">STRUCTURAL RISER ANCHOR</text>
+
+  <!-- Nose tether and ejection direction -->
+  <path d="M656 282C736 339 735 473 623 545" class="tether"/>
+  <circle cx="654" cy="282" r="7" fill="#dc2626"/>
+  <circle cx="623" cy="545" r="7" fill="#dc2626"/>
+  <path d="M740 315V225" fill="none" stroke="#dc2626" stroke-width="6" stroke-dasharray="10 7" marker-end="url(#arrowRed)"/>
+  <text x="760" y="251" class="small" fill="#dc2626">nose exits here</text>
+
+  <!-- Sealed avionics bay -->
+  <rect x="457" y="590" width="236" height="288" rx="10" fill="#e8f3ec" stroke="#166534" stroke-width="4"/>
+  <rect x="466" y="600" width="218" height="268" rx="7" fill="#f0fdf4" stroke="#86efac" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="575" y="618" text-anchor="middle" class="section">SEALED AVIONICS / PAYLOAD BAY</text>
+
+  <!-- Servos and sealed feedthroughs -->
+  <rect x="500" y="641" width="68" height="54" rx="7" fill="#ddd6fe" stroke="#6d28d9" stroke-width="3"/>
+  <rect x="585" y="641" width="68" height="54" rx="7" fill="#ddd6fe" stroke="#6d28d9" stroke-width="3"/>
+  <circle cx="534" cy="641" r="10" fill="#7c3aed"/><circle cx="619" cy="641" r="10" fill="#7c3aed"/>
+  <path d="M534 641C529 612 527 592 524 573M619 641C624 612 626 592 628 573" class="brake"/>
+  <circle cx="524" cy="580" r="8" fill="#fff" stroke="#7c3aed" stroke-width="4"/>
+  <circle cx="628" cy="580" r="8" fill="#fff" stroke="#7c3aed" stroke-width="4"/>
+  <text x="534" y="714" text-anchor="middle" class="tiny">Servo 1</text>
+  <text x="619" y="714" text-anchor="middle" class="tiny">Servo 2</text>
+
+  <!-- Electronics board -->
+  <rect x="493" y="730" width="165" height="72" rx="9" fill="#14532d" stroke="#052e16" stroke-width="3"/>
+  <rect x="508" y="745" width="65" height="36" rx="4" fill="#86efac"/>
+  <rect x="585" y="743" width="24" height="24" rx="3" fill="#d1fae5"/>
+  <rect x="617" y="744" width="25" height="13" fill="#a7f3d0"/>
+  <circle cx="598" cy="783" r="6" fill="#38bdf8"/><circle cx="619" cy="783" r="6" fill="#facc15"/>
+  <text x="575" y="823" text-anchor="middle" class="tiny">Heltec + IMU + GNSS + BMP388</text>
+
+  <!-- Battery cradle -->
+  <rect x="498" y="829" width="155" height="30" rx="7" fill="#92400e" opacity="0.35"/>
+  <rect x="510" y="833" width="131" height="44" rx="8" fill="url(#battery)" stroke="#92400e" stroke-width="3"/>
+  <path d="M500 837L651 870M500 870L651 837" stroke="#78350f" stroke-width="8" opacity="0.72"/>
+  <rect x="626" y="842" width="18" height="23" rx="3" fill="#111827"/>
+  <text x="575" y="895" text-anchor="middle" class="tiny">Rigid nonconductive cradle • two restraints • covered terminals</text>
+
+  <!-- External static pressure port -->
+  <circle cx="704" cy="785" r="7" fill="#38bdf8" stroke="#0369a1" stroke-width="3"/>
+  <path d="M655 785H704" fill="none" stroke="#38bdf8" stroke-width="3" stroke-dasharray="5 4"/>
+  <text x="727" y="790" class="tiny">static port</text>
+
+  <!-- Service hatch / locked joint -->
+  <path d="M431 906H719" stroke="#334155" stroke-width="7"/>
+  <circle cx="460" cy="906" r="8" fill="#fbbf24" stroke="#78350f" stroke-width="3"/>
+  <circle cx="690" cy="906" r="8" fill="#fbbf24" stroke="#78350f" stroke-width="3"/>
+  <text x="575" y="928" text-anchor="middle" class="tiny">service joint locked for flight — does not separate</text>
+
+  <!-- Motor and motor mount -->
+  <rect x="516" y="928" width="119" height="80" rx="8" fill="url(#motor)" stroke="#020617" stroke-width="4"/>
+  <rect x="535" y="944" width="81" height="49" rx="4" fill="#334155" stroke="#94a3b8" stroke-width="2"/>
+  <path d="M555 1008L566 1032H585L596 1008" fill="#1e293b" stroke="#020617" stroke-width="3"/>
+  <text x="575" y="973" text-anchor="middle" class="white" style="font:700 13px Arial">G40</text>
+  <text x="575" y="990" text-anchor="middle" class="white" style="font:11px Arial">factory ejection</text>
+
+  <!-- Side gas bypass duct -->
+  <path d="M500 944H479V892H477V570Q477 548 496 536" fill="none" stroke="#9a3412" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M500 944H479V892H477V570Q477 548 496 536" fill="none" stroke="#fdba74" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M500 944H479V738" class="gas"/>
+  <path d="M477 738V548Q477 532 500 523" class="gas"/>
+  <!-- Baffle at outlet -->
+  <path d="M488 520L501 508L514 520L527 508L540 520" fill="none" stroke="#7c2d12" stroke-width="5"/>
+  <circle cx="497" cy="521" r="5" fill="#f97316"/><circle cx="519" cy="521" r="5" fill="#f97316"/>
+
+  <!-- Structural load path into airframe -->
+  <path d="M512 545C488 549 474 563 465 586V756" class="load"/>
+  <path d="M638 545C662 549 676 563 685 586V756" class="load"/>
+
+  <!-- Left callouts -->
+  <g>
+    <rect x="63" y="177" width="285" height="72" rx="12" class="callout"/>
+    <circle cx="88" cy="202" r="16" fill="#334155"/><text x="88" y="202" class="num">1</text>
+    <text x="112" y="202" class="label">Only the nose opens</text>
+    <text x="112" y="225" class="small">Slip fit; red tether keeps it attached.</text>
+    <path d="M348 215L456 274" class="leader"/>
+  </g>
+  <g>
+    <rect x="63" y="286" width="285" height="86" rx="12" class="callout"/>
+    <circle cx="88" cy="312" r="16" fill="#334155"/><text x="88" y="312" class="num">2</text>
+    <text x="112" y="312" class="label">Parafoil above payload</text>
+    <text x="112" y="335" class="small">Sleeve, ordered line stows and protector</text>
+    <text x="112" y="355" class="small">support clean extraction and inflation.</text>
+    <path d="M348 332L485 392" class="leader"/>
+  </g>
+  <g>
+    <rect x="63" y="421" width="285" height="82" rx="12" class="callout"/>
+    <circle cx="88" cy="447" r="16" fill="#2563eb"/><text x="88" y="447" class="num">3</text>
+    <text x="112" y="447" class="label">Main risers carry the load</text>
+    <text x="112" y="470" class="small">The anchor transfers force into the body.</text>
+    <text x="112" y="490" class="small">The servos never support the rocket.</text>
+    <path d="M348 467L507 551" class="leader"/>
+  </g>
+  <g>
+    <rect x="63" y="553" width="285" height="91" rx="12" class="callout"/>
+    <circle cx="88" cy="579" r="16" fill="#7c3aed"/><text x="88" y="579" class="num">4</text>
+    <text x="112" y="579" class="label">Brake lines are control-only</text>
+    <text x="112" y="602" class="small">Use sealed, low-friction guides where</text>
+    <text x="112" y="622" class="small">the lines enter the protected bay.</text>
+    <path d="M348 606L512 581" class="leader"/>
+  </g>
+  <g>
+    <rect x="63" y="698" width="285" height="82" rx="12" class="callout"/>
+    <circle cx="88" cy="724" r="16" fill="#166534"/><text x="88" y="724" class="num">5</text>
+    <text x="112" y="724" class="label">Gas-tight avionics bay</text>
+    <text x="112" y="747" class="small">Electronics never share the hot-gas path.</text>
+    <text x="112" y="767" class="small">BMP388 samples outside static pressure.</text>
+    <path d="M348 744L462 760" class="leader"/>
+  </g>
+  <g>
+    <rect x="63" y="831" width="285" height="86" rx="12" class="callout"/>
+    <circle cx="88" cy="857" r="16" fill="#d97706"/><text x="88" y="857" class="num">6</text>
+    <text x="112" y="857" class="label">Battery mechanically protected</text>
+    <text x="112" y="880" class="small">Rigid cradle, terminal cover, strain relief</text>
+    <text x="112" y="900" class="small">and two independent restraints.</text>
+    <path d="M348 880L509 855" class="leader"/>
+  </g>
+  <g>
+    <rect x="63" y="954" width="285" height="80" rx="12" class="callout"/>
+    <circle cx="88" cy="980" r="16" fill="#f97316"/><text x="88" y="980" class="num">7</text>
+    <text x="112" y="980" class="label">Unmodified factory system</text>
+    <text x="112" y="1003" class="small">No added powder and no motor modification.</text>
+    <path d="M348 998L516 976" class="leader"/>
+  </g>
+
+  <!-- Right-side callouts inside main panel -->
+  <g>
+    <rect x="810" y="221" width="315" height="87" rx="12" class="callout"/>
+    <circle cx="836" cy="247" r="16" fill="#dc2626"/><text x="836" y="247" class="num">8</text>
+    <text x="861" y="247" class="label">Tether is separate from lines</text>
+    <text x="861" y="270" class="small">Prevents the nose from becoming debris</text>
+    <text x="861" y="290" class="small">or crossing the steering system.</text>
+    <path d="M810 271L692 336" class="leader"/>
+  </g>
+  <g>
+    <rect x="810" y="381" width="315" height="90" rx="12" class="callout"/>
+    <circle cx="836" cy="407" r="16" fill="#f97316"/><text x="836" y="407" class="num">9</text>
+    <text x="861" y="407" class="label">Baffle/cooling outlet</text>
+    <text x="861" y="430" class="small">Gas enters beneath the protector and</text>
+    <text x="861" y="450" class="small">pressurizes only the recovery bay.</text>
+    <path d="M810 431L535 516" class="leader"/>
+  </g>
+  <g>
+    <rect x="810" y="532" width="315" height="93" rx="12" class="callout"/>
+    <circle cx="836" cy="558" r="16" fill="#f97316"/><text x="836" y="558" class="num">10</text>
+    <text x="861" y="558" class="label">Sealed bypass duct</text>
+    <text x="861" y="581" class="small">Carries pressure around the payload bay.</text>
+    <text x="861" y="601" class="small">Hot section requires suitable reinforcement.</text>
+    <path d="M810 583L488 691" class="leader"/>
+  </g>
+  <g>
+    <rect x="810" y="692" width="315" height="91" rx="12" class="callout"/>
+    <circle cx="836" cy="718" r="16" fill="#0ea5e9"/><text x="836" y="718" class="num">11</text>
+    <text x="861" y="718" class="label">Outside pressure only</text>
+    <text x="861" y="741" class="small">Dedicated static port serves the barometer;</text>
+    <text x="861" y="761" class="small">it is not connected to the gas duct.</text>
+    <path d="M810 744L706 786" class="leader"/>
+  </g>
+  <g>
+    <rect x="810" y="851" width="315" height="94" rx="12" class="callout"/>
+    <circle cx="836" cy="877" r="16" fill="#334155"/><text x="836" y="877" class="num">12</text>
+    <text x="861" y="877" class="label">No mid-body flight separation</text>
+    <text x="861" y="900" class="small">Access joint remains positively locked.</text>
+    <text x="861" y="920" class="small">Only the nose shoulder releases.</text>
+    <path d="M810 902L716 906" class="leader"/>
+  </g>
+
+  <!-- Deployed state panel -->
+  <rect x="1185" y="110" width="580" height="985" rx="20" class="panel" filter="url(#shadow)"/>
+  <text x="1475" y="150" text-anchor="middle" class="panel-title">DEPLOYED CONFIGURATION</text>
+  <text x="1475" y="176" text-anchor="middle" class="small">The intact payload/body hangs below the parafoil.</text>
+
+  <!-- Inflated parafoil -->
+  <path d="M1257 315C1282 221 1380 184 1474 184C1568 184 1667 221 1692 315C1635 288 1583 281 1474 281C1365 281 1314 288 1257 315Z" fill="url(#canopy)" stroke="#7f1d1d" stroke-width="5"/>
+  <path d="M1282 295C1310 233 1389 208 1474 208C1559 208 1638 233 1666 295" fill="none" stroke="#fecaca" stroke-width="3"/>
+  <path d="M1321 284L1338 234M1371 278L1380 213M1422 281L1425 202M1474 281V200M1526 281L1523 202M1577 278L1568 213M1627 284L1610 234" stroke="#fecaca" stroke-width="2" opacity="0.75"/>
+  <path d="M1257 315C1318 292 1391 297 1474 297C1557 297 1630 292 1692 315" fill="none" stroke="#7f1d1d" stroke-width="5"/>
+  <text x="1475" y="337" text-anchor="middle" class="label">STEERABLE RAM-AIR PARAFOIL</text>
+
+  <!-- Suspension lines and confluence -->
+  <path d="M1290 302L1435 525M1340 292L1448 525M1396 286L1461 525M1552 286L1487 525M1608 292L1500 525M1658 302L1513 525" fill="none" stroke="#2563eb" stroke-width="3"/>
+  <path d="M1435 525L1456 570M1513 525L1492 570" fill="none" stroke="#2563eb" stroke-width="7"/>
+  <path d="M1315 299C1334 435 1373 517 1425 612" class="brake"/>
+  <path d="M1633 299C1614 435 1575 517 1523 612" class="brake"/>
+
+  <!-- Nose tethered off to side -->
+  <path d="M1491 565C1592 534 1655 558 1683 622" class="tether"/>
+  <path d="M1660 676C1664 649 1675 625 1696 612C1717 625 1728 649 1732 676Z" fill="url(#nose)" stroke="#1e293b" stroke-width="4"/>
+  <text x="1696" y="700" text-anchor="middle" class="tiny">tethered nose</text>
+
+  <!-- Hanging intact rocket -->
+  <path d="M1406 581H1542V944Q1474 966 1406 944Z" fill="url(#tube)" stroke="#1e293b" stroke-width="5"/>
+  <path d="M1422 600H1526V905" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <rect x="1422" y="606" width="104" height="82" rx="7" fill="#e8f3ec" stroke="#166534" stroke-width="2"/>
+  <rect x="1434" y="619" width="34" height="26" rx="4" fill="#ddd6fe" stroke="#6d28d9" stroke-width="2"/>
+  <rect x="1480" y="619" width="34" height="26" rx="4" fill="#ddd6fe" stroke="#6d28d9" stroke-width="2"/>
+  <rect x="1437" y="655" width="74" height="23" rx="4" fill="#14532d"/>
+  <rect x="1436" y="701" width="76" height="34" rx="5" fill="url(#battery)" stroke="#92400e" stroke-width="2"/>
+  <path d="M1430 705L1518 732M1430 732L1518 705" stroke="#78350f" stroke-width="5" opacity=".7"/>
+  <rect x="1443" y="818" width="62" height="96" rx="6" fill="url(#motor)" stroke="#020617" stroke-width="3"/>
+  <path d="M1452 944L1462 971H1486L1496 944" fill="#1e293b" stroke="#020617" stroke-width="3"/>
+  <path d="M1456 570L1430 600M1492 570L1518 600" fill="none" stroke="#2563eb" stroke-width="8"/>
+  <circle cx="1474" cy="592" r="11" fill="#dbeafe" stroke="#1d4ed8" stroke-width="4"/>
+  <path d="M1425 612L1451 632M1523 612L1497 632" class="brake"/>
+  <text x="1474" y="778" text-anchor="middle" class="label">INTACT PHOENIX BODY</text>
+  <text x="1474" y="800" text-anchor="middle" class="tiny">payload remains below canopy</text>
+
+  <!-- Forces / legend in deployed panel -->
+  <path d="M1380 418L1413 470" class="load"/>
+  <text x="1222" y="419" class="small" fill="#2563eb">structural suspension load</text>
+  <path d="M1600 443L1587 485" fill="none" stroke="#7c3aed" stroke-width="4" marker-end="url(#leader)"/>
+  <text x="1550" y="420" class="small" fill="#7c3aed">brake control only</text>
+
+  <rect x="1220" y="1000" width="510" height="62" rx="12" fill="#eff6ff" stroke="#60a5fa" stroke-width="2"/>
+  <text x="1475" y="1026" text-anchor="middle" class="label">Correct descent geometry</text>
+  <text x="1475" y="1049" text-anchor="middle" class="small">Canopy → suspension risers → structural anchor → complete body</text>
+
+  <!-- Footer -->
+  <rect x="35" y="1120" width="1730" height="58" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2.5"/>
+  <text x="900" y="1145" text-anchor="middle" class="label">Concept derived from Apogee TTV ducted e-bay, AeroTech nose-only recovery drawings, and NPS guided-parafoil load-path research.</text>
+  <text x="900" y="1167" text-anchor="middle" class="small">Not dimensioned or flight-approved. Final duct area, seals, anchor ratings, nose fit and packing sequence require CAD fit checks and supervised full-pack ground testing.</text>
+</svg>
