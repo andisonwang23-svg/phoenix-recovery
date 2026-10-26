@@ -1,0 +1,246 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200" role="img" aria-labelledby="title desc">
+  <title id="title">PHOENIX current rocket side cutaway and polyimide tube routing</title>
+  <desc id="desc">Dimensioned 43 inch rocket cutaway showing a 9.5 inch nose cone, 5 inch parafoil compartment, 11.5 inch payload compartment, 17 inch motor and ejection compartment, and a continuous polyimide tube routed on the battery side from the lower compartment to directly below the nose cone.</desc>
+
+  <defs>
+    <linearGradient id="bodyFill" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f7f9fb"/>
+      <stop offset="0.5" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e8eef3"/>
+    </linearGradient>
+    <linearGradient id="noseFill" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#dce6ed"/>
+      <stop offset="0.5" stop-color="#f8fbfd"/>
+      <stop offset="1" stop-color="#bdccd7"/>
+    </linearGradient>
+    <linearGradient id="tubeFill" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#b65d0a"/>
+      <stop offset="0.35" stop-color="#f7b64e"/>
+      <stop offset="0.7" stop-color="#dc8018"/>
+      <stop offset="1" stop-color="#9d4b05"/>
+    </linearGradient>
+    <pattern id="parafoilPattern" width="12" height="12" patternUnits="userSpaceOnUse">
+      <rect width="12" height="12" fill="#f97316"/>
+      <path d="M0 12L12 0M-3 3L3-3M9 15L15 9" stroke="#ffb06f" stroke-width="2" opacity="0.55"/>
+    </pattern>
+    <marker id="arrowNavy" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#12395b"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2b8fd8"/>
+    </marker>
+    <style>
+      .title{font:700 34px Inter,Arial,sans-serif;fill:#102f4b;letter-spacing:.02em}
+      .subtitle{font:500 17px Inter,Arial,sans-serif;fill:#547084}
+      .section{font:700 16px Inter,Arial,sans-serif;fill:#102f4b;letter-spacing:.04em}
+      .label{font:600 15px Inter,Arial,sans-serif;fill:#183c59}
+      .small{font:500 13px Inter,Arial,sans-serif;fill:#526a7b}
+      .tiny{font:600 11px Inter,Arial,sans-serif;fill:#526a7b}
+      .dimension{stroke:#12395b;stroke-width:2;fill:none;marker-start:url(#arrowNavy);marker-end:url(#arrowNavy)}
+      .extension{stroke:#8fa5b5;stroke-width:1.5}
+      .callout{stroke:#526f83;stroke-width:1.7;fill:none;marker-end:url(#arrowNavy)}
+      .boundary{stroke:#8ca1b1;stroke-width:1.5;stroke-dasharray:8 7}
+      .panel{fill:#f8fbfd;stroke:#c8d6df;stroke-width:2}
+    </style>
+  </defs>
+
+  <rect width="1800" height="1200" fill="#ffffff"/>
+  <text x="70" y="62" class="title">PHOENIX — DIMENSIONED CUTAWAY &amp; TUBE ROUTING</text>
+  <text x="70" y="92" class="subtitle">Dimensioned axial layout • continuous round tube on battery side • no solid bulkheads shown</text>
+
+  <!-- Main rocket body: 43 in represented by 860 px from y=140 to y=1000 -->
+  <!-- Section scale: 20 px/in; nose 190, parafoil 100, payload 230, lower 340 -->
+  <g id="main-cutaway">
+    <!-- Nose cone, 9.5 in -->
+    <path d="M270 330 L270 301 C270 235 319 171 350 140 C381 171 430 235 430 301 L430 330 Z"
+          fill="url(#noseFill)" stroke="#294b63" stroke-width="3"/>
+    <line x1="270" y1="330" x2="430" y2="330" class="boundary"/>
+    <text x="350" y="228" text-anchor="middle" class="section">NOSE CONE</text>
+    <text x="350" y="251" text-anchor="middle" class="label">9.5 in</text>
+
+    <!-- Cylindrical body -->
+    <path d="M270 330 L430 330 L430 1000 L270 1000 Z" fill="url(#bodyFill)" stroke="#294b63" stroke-width="3"/>
+
+    <!-- Section boundaries, explicitly dashed rather than bulkheads -->
+    <line x1="270" y1="430" x2="430" y2="430" class="boundary"/>
+    <line x1="270" y1="660" x2="430" y2="660" class="boundary"/>
+    <text x="443" y="424" class="tiny">OPEN SECTION BOUNDARY</text>
+    <text x="443" y="654" class="tiny">OPEN SECTION BOUNDARY</text>
+
+    <!-- Parafoil bay -->
+    <path d="M320 350 C290 366 292 399 319 415 C341 426 392 420 408 398 C420 381 407 354 382 348 C363 343 337 342 320 350 Z"
+          fill="url(#parafoilPattern)" stroke="#b94909" stroke-width="2"/>
+    <path d="M302 406 C322 388 351 392 371 412" stroke="#fff0e5" stroke-width="3" fill="none"/>
+    <text x="350" y="376" text-anchor="middle" class="section" fill="#6d2b08">PACKED</text>
+    <text x="350" y="396" text-anchor="middle" class="section" fill="#6d2b08">PARAFOIL</text>
+
+    <!-- Payload module: 10 in centered in 11.5 in bay; 0.75 in allowance each end -->
+    <rect x="292" y="445" width="116" height="200" rx="8" fill="#eef4f7" stroke="#4a677a" stroke-width="2.5"/>
+    <!-- Central payload wall, 2mm -->
+    <rect x="347" y="445" width="6" height="200" fill="#6f7f89"/>
+    <!-- Servos at upper end of payload -->
+    <rect x="305" y="447" width="38" height="28" rx="4" fill="#212a30"/>
+    <rect x="357" y="447" width="38" height="28" rx="4" fill="#212a30"/>
+    <circle cx="324" cy="461" r="8" fill="#dce4e8" stroke="#8799a4"/>
+    <circle cx="376" cy="461" r="8" fill="#dce4e8" stroke="#8799a4"/>
+    <text x="350" y="487" text-anchor="middle" class="tiny">SERVO END</text>
+
+    <!-- Battery side -->
+    <rect x="306" y="510" width="35" height="88" rx="5" fill="#d7e1e6" stroke="#607889" stroke-width="1.5"/>
+    <rect x="309" y="513" width="29" height="8" fill="#f3c52d"/>
+    <text x="323" y="552" text-anchor="middle" class="tiny" transform="rotate(-90 323 552)">BATTERY</text>
+    <rect x="310" y="608" width="29" height="23" rx="3" fill="#356e97"/>
+    <text x="324" y="620" text-anchor="middle" class="tiny" fill="#ffffff">5 V</text>
+
+    <!-- Electronics side -->
+    <rect x="359" y="506" width="36" height="55" rx="4" fill="#172c35" stroke="#294b63"/>
+    <rect x="359" y="570" width="36" height="17" rx="3" fill="#3d8cb7"/>
+    <rect x="359" y="592" width="36" height="17" rx="3" fill="#4c9b67"/>
+    <rect x="359" y="614" width="36" height="17" rx="3" fill="#935786"/>
+    <text x="377" y="536" text-anchor="middle" class="tiny" fill="#ffffff">ESP32</text>
+    <text x="377" y="548" text-anchor="middle" class="tiny" fill="#ffffff">+ LoRa</text>
+    <text x="377" y="582" text-anchor="middle" class="tiny" fill="#ffffff">GPS</text>
+    <text x="377" y="604" text-anchor="middle" class="tiny" fill="#ffffff">BARO</text>
+    <text x="377" y="626" text-anchor="middle" class="tiny" fill="#ffffff">IMU</text>
+
+    <!-- Continuous polyimide tube on battery side, not attached to central wall -->
+    <rect x="281" y="342" width="12" height="620" rx="6" fill="url(#tubeFill)" stroke="#8a4107" stroke-width="2"/>
+    <ellipse cx="287" cy="342" rx="7" ry="4" fill="#ffe2ad" stroke="#8a4107" stroke-width="2"/>
+    <ellipse cx="287" cy="962" rx="7" ry="4" fill="#ffe2ad" stroke="#8a4107" stroke-width="2"/>
+    <!-- Direction arrows inside tube -->
+    <line x1="287" y1="906" x2="287" y2="842" stroke="#2b8fd8" stroke-width="3" marker-end="url(#arrowBlue)"/>
+    <line x1="287" y1="760" x2="287" y2="696" stroke="#2b8fd8" stroke-width="3" marker-end="url(#arrowBlue)"/>
+    <line x1="287" y1="610" x2="287" y2="546" stroke="#2b8fd8" stroke-width="3" marker-end="url(#arrowBlue)"/>
+    <line x1="287" y1="455" x2="287" y2="384" stroke="#2b8fd8" stroke-width="3" marker-end="url(#arrowBlue)"/>
+
+    <!-- Lower compartment symbol -->
+    <rect x="321" y="826" width="58" height="157" rx="7" fill="#d9dee2" stroke="#6c7e89" stroke-width="2"/>
+    <path d="M328 840 H372 M328 856 H372" stroke="#a0adb5" stroke-width="3"/>
+    <text x="350" y="902" text-anchor="middle" class="tiny" transform="rotate(-90 350 902)">LOWER SERVICE ASSEMBLY</text>
+
+    <!-- Bottom fins -->
+    <path d="M270 842 L204 985 L270 956 Z" fill="#9eb4c2" stroke="#294b63" stroke-width="3"/>
+    <path d="M430 842 L496 985 L430 956 Z" fill="#9eb4c2" stroke="#294b63" stroke-width="3"/>
+    <path d="M334 1000 L350 914 L366 1000 Z" fill="#7e98a8" stroke="#294b63" stroke-width="2" opacity="0.8"/>
+
+    <!-- Body ID dimension -->
+    <line x1="270" y1="705" x2="430" y2="705" class="dimension"/>
+    <text x="350" y="696" text-anchor="middle" class="label">BODY INSIDE DIAMETER 2.26 in</text>
+
+    <!-- Section dimension stack -->
+    <line x1="530" y1="140" x2="530" y2="330" class="dimension"/>
+    <line x1="530" y1="330" x2="530" y2="430" class="dimension"/>
+    <line x1="530" y1="430" x2="530" y2="660" class="dimension"/>
+    <line x1="530" y1="660" x2="530" y2="1000" class="dimension"/>
+    <text x="552" y="232" class="label">NOSE CONE</text>
+    <text x="552" y="253" class="small">9.5 in</text>
+    <text x="552" y="375" class="label">PARAFOIL COMPARTMENT</text>
+    <text x="552" y="396" class="small">5.0 in</text>
+    <text x="552" y="538" class="label">PAYLOAD COMPARTMENT</text>
+    <text x="552" y="559" class="small">11.5 in</text>
+    <text x="552" y="824" class="label">MOTOR / EJECTION</text>
+    <text x="552" y="845" class="label">COMPARTMENT</text>
+    <text x="552" y="866" class="small">17.0 in</text>
+
+    <!-- Tube callouts -->
+    <path d="M198 322 C225 322 252 328 287 344" class="callout"/>
+    <text x="25" y="287" class="label">UPPER OUTLET</text>
+    <text x="25" y="308" class="small">directly below nose cone</text>
+    <path d="M188 993 C218 979 245 969 287 962" class="callout"/>
+    <text x="184" y="1020" text-anchor="end" class="label">LOWER INLET</text>
+    <path d="M195 556 C220 537 244 520 287 520" class="callout"/>
+    <text x="25" y="514" class="label">CONTINUOUS POLYIMIDE TUBE</text>
+    <text x="25" y="535" class="small">battery side</text>
+    <text x="25" y="556" class="small">not attached to central wall</text>
+    <text x="25" y="577" class="small">Ø TBD — validate by ground test</text>
+  </g>
+
+  <!-- Payload cross-section inset -->
+  <g id="cross-section">
+    <rect x="760" y="135" width="970" height="520" rx="22" class="panel"/>
+    <text x="800" y="184" class="section">ENLARGED PAYLOAD CROSS-SECTION</text>
+    <text x="800" y="210" class="small">Tube location is conceptual; diameter and clearances remain TBD.</text>
+
+    <circle cx="1040" cy="420" r="180" fill="#ffffff" stroke="#294b63" stroke-width="5"/>
+    <circle cx="1040" cy="420" r="167" fill="#f4f8fa" stroke="#b6c6d0" stroke-width="2"/>
+    <!-- central wall -->
+    <rect x="1036" y="263" width="8" height="314" rx="2" fill="#6f7f89"/>
+    <text x="1024" y="420" text-anchor="middle" class="tiny" transform="rotate(-90 1024 420)">CENTRAL WALL 2 mm</text>
+
+    <!-- Battery side objects -->
+    <rect x="930" y="360" width="75" height="122" rx="12" fill="#d7e1e6" stroke="#607889" stroke-width="2"/>
+    <rect x="935" y="365" width="65" height="13" fill="#f3c52d"/>
+    <text x="968" y="427" text-anchor="middle" class="label" transform="rotate(-90 968 427)">BATTERY</text>
+    <rect x="943" y="492" width="50" height="35" rx="5" fill="#356e97"/>
+    <text x="968" y="514" text-anchor="middle" class="tiny" fill="#fff">5 V BOOST</text>
+
+    <!-- Separate tube -->
+    <circle cx="878" cy="420" r="22" fill="url(#tubeFill)" stroke="#8a4107" stroke-width="3"/>
+    <circle cx="878" cy="420" r="11" fill="#fff6df" stroke="#8a4107" stroke-width="2"/>
+    <path d="M777 311 C799 330 821 352 857 388" class="callout"/>
+    <text x="798" y="282" class="label">ROUND POLYIMIDE TUBE</text>
+    <text x="798" y="303" class="small">Ø TBD • CLEARANCE REQUIRED</text>
+
+    <!-- Electronics side -->
+    <rect x="1075" y="342" width="85" height="65" rx="8" fill="#172c35"/>
+    <rect x="1075" y="420" width="85" height="27" rx="5" fill="#3d8cb7"/>
+    <rect x="1075" y="458" width="85" height="27" rx="5" fill="#4c9b67"/>
+    <rect x="1075" y="496" width="85" height="27" rx="5" fill="#935786"/>
+    <text x="1118" y="371" text-anchor="middle" class="tiny" fill="#fff">HELTEC ESP32</text>
+    <text x="1118" y="388" text-anchor="middle" class="tiny" fill="#fff">+ LoRa</text>
+    <text x="1118" y="438" text-anchor="middle" class="tiny" fill="#fff">GPS</text>
+    <text x="1118" y="477" text-anchor="middle" class="tiny" fill="#fff">BAROMETER</text>
+    <text x="1118" y="515" text-anchor="middle" class="tiny" fill="#fff">IMU</text>
+
+    <text x="968" y="333" text-anchor="middle" class="tiny">BATTERY SIDE</text>
+    <text x="1118" y="322" text-anchor="middle" class="tiny">ELECTRONICS SIDE</text>
+
+    <!-- diameter dimension -->
+    <line x1="860" y1="615" x2="1220" y2="615" class="dimension"/>
+    <text x="1040" y="640" text-anchor="middle" class="label">INSIDE DIAMETER 2.26 in</text>
+
+    <!-- routing rules -->
+    <rect x="1260" y="245" width="420" height="330" rx="16" fill="#ffffff" stroke="#d2dde4" stroke-width="2"/>
+    <text x="1290" y="286" class="section">CONFIRMED ROUTING</text>
+    <circle cx="1296" cy="323" r="5" fill="#f08a1c"/><text x="1314" y="329" class="label">Normal round polyimide tube</text>
+    <circle cx="1296" cy="363" r="5" fill="#f08a1c"/><text x="1314" y="369" class="label">Runs on battery side</text>
+    <circle cx="1296" cy="403" r="5" fill="#f08a1c"/><text x="1314" y="409" class="label">Not attached to central wall</text>
+    <circle cx="1296" cy="443" r="5" fill="#f08a1c"/><text x="1314" y="449" class="label">Continuous lower-to-upper pipe</text>
+    <circle cx="1296" cy="483" r="5" fill="#f08a1c"/><text x="1314" y="489" class="label">Clear of battery, wiring and fabric</text>
+    <circle cx="1296" cy="523" r="5" fill="#f08a1c"/><text x="1314" y="529" class="label">No solid bulkheads added</text>
+  </g>
+
+  <!-- Lower information panels -->
+  <g>
+    <rect x="760" y="690" width="470" height="335" rx="20" class="panel"/>
+    <text x="795" y="735" class="section">AXIAL DIMENSION CHECK</text>
+    <text x="795" y="778" class="label">9.5 in</text><text x="910" y="778" class="small">nose cone</text>
+    <text x="795" y="817" class="label">5.0 in</text><text x="910" y="817" class="small">parafoil compartment</text>
+    <text x="795" y="856" class="label">11.5 in</text><text x="910" y="856" class="small">payload compartment</text>
+    <text x="795" y="895" class="label">17.0 in</text><text x="910" y="895" class="small">motor / ejection compartment</text>
+    <line x1="795" y1="918" x2="1188" y2="918" stroke="#b9c9d3" stroke-width="2"/>
+    <text x="795" y="957" class="section">43.0 in TOTAL</text>
+    <text x="795" y="982" class="small">Payload module: 10.0 in including servos; 9.0 in excluding servos.</text>
+    <text x="795" y="1005" class="small">The 1.5 in allowance is included in the 11.5 in payload compartment.</text>
+  </g>
+
+  <g>
+    <rect x="1260" y="690" width="470" height="335" rx="20" fill="#fff8ed" stroke="#f2c17b" stroke-width="2"/>
+    <text x="1295" y="735" class="section" fill="#8a4a08">ENGINEERING HOLD POINTS</text>
+    <text x="1295" y="776" class="label">1. Tube inside/outside diameter: TBD</text>
+    <text x="1295" y="814" class="label">2. Minimum clearance to battery: TBD</text>
+    <text x="1295" y="852" class="label">3. End connection and retention: TBD</text>
+    <text x="1295" y="890" class="label">4. Temperature and pressure validation: required</text>
+    <text x="1295" y="928" class="label">5. Full deployment ground test: required</text>
+    <text x="1295" y="979" class="small">Concept routing only — not a fabrication or flight-approval drawing.</text>
+  </g>
+
+  <!-- Legend/footer -->
+  <g>
+    <rect x="70" y="1080" width="1660" height="70" rx="14" fill="#102f4b"/>
+    <circle cx="105" cy="1115" r="9" fill="#e68a1f"/><text x="125" y="1121" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="600" fill="#fff">POLYIMIDE TUBE</text>
+    <circle cx="315" cy="1115" r="9" fill="#f97316"/><text x="335" y="1121" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="600" fill="#fff">PARAFOIL</text>
+    <circle cx="485" cy="1115" r="9" fill="#172c35"/><text x="505" y="1121" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="600" fill="#fff">ELECTRONICS</text>
+    <text x="735" y="1121" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="600" fill="#fff">NO SOLID BULKHEADS SHOWN • VERIFY FIT WITH THE PHYSICAL ASSEMBLY BEFORE BUILDING</text>
+  </g>
+</svg>
