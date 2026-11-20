@@ -35,6 +35,12 @@ void GuidedDropController::resetNavigationTimers() {
     navigation_loss_since_ms_ = 0;
 }
 
+void GuidedDropController::resetReturnPhase() {
+    homing_established_ = false;
+    homing_candidate_active_ = false;
+    homing_candidate_since_ms_ = 0;
+}
+
 void GuidedDropController::resetGpsQuality() {
     have_accepted_position_ = false;
     gps_suspect_ = false;
@@ -60,6 +66,7 @@ void GuidedDropController::reset() {
     heading_sign_changes_ = 0;
     oscillation_window_start_ms_ = 0;
     resetNavigationTimers();
+    resetReturnPhase();
     resetGpsQuality();
 }
 
@@ -148,6 +155,47 @@ float GuidedDropController::updateOscillationDamping(float heading_error_deg,
         ? config_.oscillation_authority_scale : 1.0f;
 }
 
+GuidedDropStatus GuidedDropController::updateReturnPhase(
+    float heading_error_deg, uint32_t now_ms) {
+    if (!std::isfinite(heading_error_deg)) {
+        resetReturnPhase();
+        return GuidedDropStatus::TARGET_ACQUISITION;
+    }
+
+    const float absolute_error = std::fabs(heading_error_deg);
+    const float alignment = std::max(config_.homing_alignment_deg, 0.0f);
+    const float reentry = std::max(config_.acquisition_reentry_deg, alignment);
+
+    if (homing_established_) {
+        if (absolute_error > reentry) {
+            resetReturnPhase();
+            return GuidedDropStatus::TARGET_ACQUISITION;
+        }
+        return GuidedDropStatus::HOMING;
+    }
+
+    if (absolute_error > alignment) {
+        homing_candidate_active_ = false;
+        homing_candidate_since_ms_ = 0;
+        return GuidedDropStatus::TARGET_ACQUISITION;
+    }
+
+    if (!homing_candidate_active_) {
+        homing_candidate_active_ = true;
+        homing_candidate_since_ms_ = now_ms;
+        return GuidedDropStatus::TARGET_ACQUISITION;
+    }
+
+    if (static_cast<uint32_t>(now_ms - homing_candidate_since_ms_) <
+        config_.homing_confirm_ms) {
+        return GuidedDropStatus::TARGET_ACQUISITION;
+    }
+
+    homing_established_ = true;
+    homing_candidate_active_ = false;
+    return GuidedDropStatus::HOMING;
+}
+
 GuidedDropOutput GuidedDropController::neutral(GuidedDropStatus status) {
     output_.status = status;
     output_.mode = status == GuidedDropStatus::FAULT_NEUTRAL
@@ -188,7 +236,21 @@ GuidedDropOutput GuidedDropController::runGuidance(
         std::min(guidance_config.final_approach_max_command, authority_limit);
     guidance_config.low_speed_max_command =
         std::min(guidance_config.low_speed_max_command, authority_limit);
-    guidance_config.unreachable_max_command = authority_limit;
+    guidance_config.unreachable_max_command =
+        std::min(guidance_config.unreachable_max_command, authority_limit);
+
+    if (status == GuidedDropStatus::TARGET_ACQUISITION) {
+        const float acquisition_limit = std::max(
+            0.0f, std::min(config_.target_acquisition_max_command,
+                           authority_limit));
+        guidance_config.max_steering =
+            std::min(guidance_config.max_steering, acquisition_limit);
+        guidance_config.low_speed_max_command =
+            std::min(guidance_config.low_speed_max_command, acquisition_limit);
+        guidance_config.unreachable_max_command =
+            std::min(guidance_config.unreachable_max_command,
+                     acquisition_limit);
+    }
 
     const float target_bearing = bearingDegrees(latitude, longitude,
                                                  in.target_latitude,
@@ -325,6 +387,7 @@ GuidedDropOutput GuidedDropController::step(const GuidedDropInput& in) {
     const bool navigation_valid = target_valid && gps_point_accepted;
     if (!navigation_valid) {
         navigation_candidate_active_ = false;
+        resetReturnPhase();
         if (guidance_started_) {
             if (!navigation_loss_active_) {
                 navigation_loss_active_ = true;
@@ -374,13 +437,20 @@ GuidedDropOutput GuidedDropController::step(const GuidedDropInput& in) {
     const bool final_approach =
         in.altitude_agl_m <= config_.guidance.final_approach_altitude_m ||
         distance_m <= config_.final_approach_radius_m;
+    const float target_bearing = bearingDegrees(in.latitude, in.longitude,
+                                                in.target_latitude,
+                                                in.target_longitude);
+    const float heading_error = headingErrorDegrees(in.gps_course_deg,
+                                                    target_bearing);
+    const GuidedDropStatus return_phase = final_approach
+        ? GuidedDropStatus::FINAL_APPROACH
+        : updateReturnPhase(heading_error, in.now_ms);
     return runGuidance(in, in.latitude, in.longitude, in.gps_course_deg,
                        in.ground_speed_mps,
                        final_approach ? GuidanceMode::FINAL_APPROACH
                                       : GuidanceMode::HEADING_TO_TARGET,
                        authority_limit,
-                       final_approach ? GuidedDropStatus::FINAL_APPROACH
-                                      : GuidedDropStatus::GUIDANCE_ACTIVE);
+                       return_phase);
 }
 
 }  // namespace logic

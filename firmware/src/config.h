@@ -214,7 +214,7 @@ constexpr uint8_t LORA_SYNC_WORD = 0x12;
 constexpr uint32_t TELEMETRY_RATE_HZ = 2;
 constexpr uint32_t LORA_MIN_COMMAND_RX_WINDOW_MS = 250;
 constexpr uint32_t LOG_RATE_HZ = 10;
-constexpr uint32_t CONFIG_VERSION = 8;
+constexpr uint32_t CONFIG_VERSION = 9; // published-return phase planner + reachability limits
 constexpr uint32_t MAIN_LOOP_INTERVAL_MS = 10; // 100 Hz main loop
 
 // ---------------------------------------------------------------------------
@@ -297,6 +297,17 @@ constexpr uint32_t GUIDED_DROP_INSTABILITY_LATCH_MS = 2000; // REQUIRES EXPERIME
 constexpr float    GUIDED_DROP_NEUTRAL_GYRO_DPS = 25.0f; // REQUIRES EXPERIMENTAL CALIBRATION
 constexpr uint8_t  GUIDED_DROP_OSCILLATION_SIGN_CHANGES = 4; // REQUIRES EXPERIMENTAL CALIBRATION
 constexpr uint32_t GUIDED_DROP_OSCILLATION_WINDOW_MS = 4000; // REQUIRES EXPERIMENTAL CALIBRATION
+// Published small-parafoil software used a 15-degree straight-flight window.
+// PHOENIX adds a wider re-entry threshold and a persistence timer so GPS course
+// noise cannot chatter between target acquisition and homing.
+constexpr float    GUIDED_DROP_HOMING_ALIGNMENT_DEG = 15.0f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr float    GUIDED_DROP_ACQUISITION_REENTRY_DEG = 30.0f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr uint32_t GUIDED_DROP_HOMING_CONFIRM_MS = 750; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr float    GUIDED_DROP_TARGET_ACQUISITION_MAX_STEERING = 0.20f; // REQUIRES EXPERIMENTAL CALIBRATION
+// When the target lies outside the measured glide footprint, stable descent is
+// more important than an aggressive, futile correction.
+constexpr float    GUIDED_DROP_UNREACHABLE_MAX_STEERING = 0.08f; // REQUIRES EXPERIMENTAL CALIBRATION
+constexpr float    GUIDED_DROP_NOMINAL_GLIDE_RATIO = 3.0f; // PLACEHOLDER; REQUIRES EXPERIMENTAL CALIBRATION
 
 // Automatic unloaded extension/return-to-neutral service test. This uses the
 // proven bench-servo path and does not require IMU, barometer, or GPS health.

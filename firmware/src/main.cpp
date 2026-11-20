@@ -141,11 +141,17 @@ static logic::GuidedDropConfig guidedDropConfig() {
     c.imu_course_hold_max_command = cfg::GUIDED_DROP_IMU_COURSE_HOLD_MAX_COMMAND;
     c.oscillation_sign_change_limit = cfg::GUIDED_DROP_OSCILLATION_SIGN_CHANGES;
     c.oscillation_window_ms = cfg::GUIDED_DROP_OSCILLATION_WINDOW_MS;
+    c.homing_alignment_deg = cfg::GUIDED_DROP_HOMING_ALIGNMENT_DEG;
+    c.acquisition_reentry_deg = cfg::GUIDED_DROP_ACQUISITION_REENTRY_DEG;
+    c.homing_confirm_ms = cfg::GUIDED_DROP_HOMING_CONFIRM_MS;
+    c.target_acquisition_max_command =
+        cfg::GUIDED_DROP_TARGET_ACQUISITION_MAX_STEERING;
     c.guidance.kp = cfg::GUIDANCE_KP;
     c.guidance.deadband_deg = cfg::GUIDANCE_DEADBAND_DEG;
     c.guidance.max_steering = cfg::GUIDED_DROP_MAX_STEERING;
     c.guidance.low_speed_max_command = 0.05f;
-    c.guidance.unreachable_max_command = cfg::GUIDED_DROP_MAX_STEERING;
+    c.guidance.unreachable_max_command =
+        cfg::GUIDED_DROP_UNREACHABLE_MAX_STEERING;
     c.guidance.cmd_rate_limit_per_s = cfg::CMD_RATE_LIMIT_PER_S;
     c.guidance.reversal_guard_ms = cfg::MIN_TURN_REVERSAL_TIME_MS;
     c.guidance.final_approach_kp = cfg::FINAL_APPROACH_KP;
@@ -155,6 +161,7 @@ static logic::GuidedDropConfig guidedDropConfig() {
     c.guidance.min_guidance_altitude_m = cfg::MIN_GUIDANCE_ALTITUDE_M;
     c.guidance.target_accept_radius_m = cfg::TARGET_ACCEPT_RADIUS_M;
     c.guidance.min_course_speed_mps = cfg::GPS_MIN_GROUND_SPEED_FOR_COURSE;
+    c.guidance.nominal_glide_ratio = cfg::GUIDED_DROP_NOMINAL_GLIDE_RATIO;
     return c;
 }
 

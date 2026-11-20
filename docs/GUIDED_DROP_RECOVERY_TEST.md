@@ -98,16 +98,23 @@ When the calibration lock is eventually released, the inert guided profile is:
    low angular rate. A suspected canopy signature alone cannot start guidance.
 9. GPS position, course, ground speed, target, barometer, IMU, and servos must
    remain valid through the navigation confirmation interval.
-10. Guidance begins with proportional, rate-limited, reversal-guarded steering,
-   capped by both the calibrated maximum and selected authority stage.
-11. Final approach uses the smaller
+10. Guidance begins in `TARGET_ACQUISITION` with proportional, rate-limited,
+   reversal-guarded steering capped by the calibrated acquisition limit and
+   selected authority stage.
+11. After heading error remains within the configured alignment window for the
+   confirmation period, the controller enters `HOMING`. A wider re-entry
+   threshold returns it to target acquisition without rapid phase chatter.
+12. If the target lies outside the estimated altitude/glide footprint, steering
+   is limited to the conservative unreachable-target command instead of making
+   an extreme correction.
+13. Final approach uses the smaller
    `GUIDED_DROP_FINAL_MAX_STEERING` authority.
-12. A short GPS loss slews the last brake command toward neutral; a prolonged
+14. A short GPS loss slews the last brake command toward neutral; a prolonged
     loss latches fault-neutral. IMU, barometer, or actuator loss is immediately
     latched fault-neutral.
-13. Sustained excess rotation and repeated heading reversals reduce authority;
+15. Sustained excess rotation and repeated heading reversals reduce authority;
     persistent instability latches fault-neutral.
-14. Landing, abort, timeout, reboot uncertainty, or any latched fault commands
+16. Landing, abort, timeout, reboot uncertainty, or any latched fault commands
     both brakes neutral.
 
 Wi-Fi and LoRa are not controller inputs after arming. A ground-link loss does
@@ -157,6 +164,8 @@ The native test suite covers:
 - release and deployment-neutral gates;
 - stabilization, target, GPS course, and altitude gates;
 - limited nonzero steering only after all gates;
+- target-acquisition-to-homing persistence and hysteresis;
+- conservative acquisition and unreachable-target authority limits;
 - gradual neutral unwind on short GPS loss and latched neutral on timeout;
 - GPS position-jump rejection and multi-fix recovery;
 - sustained-instability latching and heading-oscillation damping;

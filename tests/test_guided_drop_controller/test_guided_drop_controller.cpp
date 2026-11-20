@@ -19,6 +19,10 @@ static GuidedDropConfig config(bool enabled = true) {
     c.sensor_max_age_ms = 1000;
     c.gps_max_position_jump_m = 50.0f;
     c.gps_recovery_fix_count = 3;
+    c.homing_alignment_deg = 15.0f;
+    c.acquisition_reentry_deg = 30.0f;
+    c.homing_confirm_ms = 100;
+    c.target_acquisition_max_command = 0.20f;
     c.guidance.kp = 0.02f;
     c.guidance.deadband_deg = 2.0f;
     c.guidance.max_steering = 0.15f;
@@ -117,11 +121,62 @@ void stability_navigation_and_altitude_gate_guidance() {
 void guidance_produces_a_limited_nonzero_brake_command() {
     GuidedDropController controller(config());
     auto out = reachGuidance(controller);
-    TEST_ASSERT_EQUAL((int)GuidedDropStatus::GUIDANCE_ACTIVE, (int)out.status);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::TARGET_ACQUISITION, (int)out.status);
     TEST_ASSERT_TRUE(out.active);
     TEST_ASSERT_TRUE(out.left_brake > 0.0f);
     TEST_ASSERT_FLOAT_WITHIN(.001f, 0.0f, out.right_brake);
     TEST_ASSERT_TRUE(out.left_brake <= 0.15f);
+}
+
+void published_return_phases_require_alignment_and_use_hysteresis() {
+    GuidedDropController controller(config());
+    auto out = reachGuidance(controller);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::TARGET_ACQUISITION,
+                      (int)out.status);
+
+    auto in = nominal(450);
+    in.gps_course_deg = 0.0f;  // target lies due north
+    out = controller.step(in);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::TARGET_ACQUISITION,
+                      (int)out.status);
+
+    in.now_ms = 551;
+    out = controller.step(in);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::HOMING, (int)out.status);
+
+    // Small course noise stays in homing; a large error deliberately returns
+    // to target acquisition instead of chattering at one threshold.
+    in.now_ms = 600;
+    in.gps_course_deg = 20.0f;
+    out = controller.step(in);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::HOMING, (int)out.status);
+    in.now_ms = 650;
+    in.gps_course_deg = 45.0f;
+    out = controller.step(in);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::TARGET_ACQUISITION,
+                      (int)out.status);
+}
+
+void target_acquisition_and_unreachable_target_are_conservatively_limited() {
+    auto c = config();
+    c.guidance.max_steering = 0.40f;
+    c.target_acquisition_max_command = 0.20f;
+    c.guidance.unreachable_max_command = 0.04f;
+    c.guidance.nominal_glide_ratio = 1.0f;
+    GuidedDropController controller(c);
+
+    auto in = nominal(301);
+    in.dt_s = 1.0f;
+    in.authority = GuidedAuthorityLevel::FORTY_PERCENT;
+    in.authority_limit = 0.40f;
+    in.target_latitude = 41.01;  // well outside a 100 m glide footprint
+    controller.step(in);
+    in.now_ms = 402;
+    const auto out = controller.step(in);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::TARGET_ACQUISITION,
+                      (int)out.status);
+    TEST_ASSERT_FALSE(out.target_reachable);
+    TEST_ASSERT_LESS_OR_EQUAL(0.041f, out.left_brake + out.right_brake);
 }
 
 void short_gps_loss_unwinds_then_latches_failsafe() {
@@ -250,6 +305,8 @@ int main() {
     RUN_TEST(release_and_deployment_delay_are_neutral);
     RUN_TEST(stability_navigation_and_altitude_gate_guidance);
     RUN_TEST(guidance_produces_a_limited_nonzero_brake_command);
+    RUN_TEST(published_return_phases_require_alignment_and_use_hysteresis);
+    RUN_TEST(target_acquisition_and_unreachable_target_are_conservatively_limited);
     RUN_TEST(short_gps_loss_unwinds_then_latches_failsafe);
     RUN_TEST(critical_sensor_or_servo_fault_latches_neutral);
     RUN_TEST(persistent_instability_after_guidance_latches_neutral);

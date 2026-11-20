@@ -28,7 +28,12 @@ enum class GuidedDropStatus : uint8_t {
     FAULT_NEUTRAL = 8,
     LANDED = 9,
     GPS_SUSPECT = 10,
-    GPS_COURSE_HOLD = 11
+    GPS_COURSE_HOLD = 11,
+    // Published parafoil systems separate the initial turn toward the target
+    // from the straighter homing leg. These values remain below 16 because the
+    // telemetry protocol stores GuidedDropStatus in a four-bit field.
+    TARGET_ACQUISITION = 12,
+    HOMING = 13
 };
 
 inline const char* guidedDropStatusName(GuidedDropStatus status) {
@@ -45,6 +50,8 @@ inline const char* guidedDropStatusName(GuidedDropStatus status) {
         case GuidedDropStatus::LANDED: return "LANDED";
         case GuidedDropStatus::GPS_SUSPECT: return "GPS_SUSPECT";
         case GuidedDropStatus::GPS_COURSE_HOLD: return "GPS_COURSE_HOLD";
+        case GuidedDropStatus::TARGET_ACQUISITION: return "TARGET_ACQUISITION";
+        case GuidedDropStatus::HOMING: return "HOMING";
     }
     return "UNKNOWN";
 }
@@ -69,6 +76,13 @@ struct GuidedDropConfig {
     float oscillation_authority_scale = 0.50f;
     uint8_t oscillation_sign_change_limit = 4;
     uint32_t oscillation_window_ms = 4000;
+    // RAPTOR used a 15-degree straight-flight window. PHOENIX adds hysteresis
+    // and persistence so noisy GPS course cannot rapidly switch phases.
+    // All values require inert-drop calibration with the actual parafoil.
+    float homing_alignment_deg = 15.0f;
+    float acquisition_reentry_deg = 30.0f;
+    uint32_t homing_confirm_ms = 750;
+    float target_acquisition_max_command = 0.20f;
     GuidanceConfig guidance{};
 };
 
@@ -160,15 +174,21 @@ private:
     int8_t last_heading_error_sign_ = 0;
     uint8_t heading_sign_changes_ = 0;
     uint32_t oscillation_window_start_ms_ = 0;
+    bool homing_established_ = false;
+    bool homing_candidate_active_ = false;
+    uint32_t homing_candidate_since_ms_ = 0;
 
     static bool validTarget(double latitude, double longitude);
     static bool landedState(DropTestState state);
     static bool postReleaseState(DropTestState state);
     void resetNavigationTimers();
+    void resetReturnPhase();
     void resetGpsQuality();
     bool acceptGpsPoint(const GuidedDropInput& input);
     bool sensorsFresh(const GuidedDropInput& input) const;
     float updateOscillationDamping(float heading_error_deg, uint32_t now_ms);
+    GuidedDropStatus updateReturnPhase(float heading_error_deg,
+                                       uint32_t now_ms);
     GuidedDropOutput neutral(GuidedDropStatus status);
     GuidedDropOutput unwindNavigationLoss(const GuidedDropInput& input);
     GuidedDropOutput runGuidance(const GuidedDropInput& input,
