@@ -195,6 +195,14 @@ void test_reversal_guard_same_direction() {
     TEST_ASSERT_TRUE(guard.allow(0.5f, 0));
 }
 
+void test_reversal_guard_remembers_direction_across_neutral() {
+    logic::ReversalGuard guard(100);
+    TEST_ASSERT_TRUE(guard.allow(1.0f, 10));
+    TEST_ASSERT_TRUE(guard.allow(0.0f, 20));
+    TEST_ASSERT_FALSE(guard.allow(-1.0f, 30));
+    TEST_ASSERT_TRUE(guard.allow(-1.0f, 110));
+}
+
 // ============================================================================
 // Test Runner
 // ============================================================================
@@ -232,6 +240,7 @@ int main() {
     RUN_TEST(test_reversal_guard_initial);
     RUN_TEST(test_reversal_guard_after_delay);
     RUN_TEST(test_reversal_guard_same_direction);
+    RUN_TEST(test_reversal_guard_remembers_direction_across_neutral);
 
     return UNITY_END();
 }

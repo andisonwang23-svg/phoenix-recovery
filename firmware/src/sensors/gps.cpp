@@ -140,7 +140,9 @@ bool GPS::update() {
         }
     }
     data_.failed_nmea_checksums = gps_->failedChecksum();
-    if (!sentence_complete) {
+    // Status and satellite-view sentences show the link is alive, but they
+    // cannot refresh the position timestamp or advance the valid-fix streak.
+    if (!sentence_complete || !gps_->location.isUpdated()) {
         invalidateStaleFix(now);
         recoverSilentModule(now);
         return false;

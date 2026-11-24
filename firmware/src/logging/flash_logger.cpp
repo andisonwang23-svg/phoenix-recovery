@@ -99,7 +99,7 @@ bool FlashLogger::endFlightLog() {
     current_flight_.entry_count = entry_count_;
     current_flight_.data_size = data_size_;
 
-    // Calculate CRC over all data (simplified)
+    // Preserve the existing v3 header CRC. It does not cover the log payload.
     current_flight_.crc = calculateCRC(reinterpret_cast<const uint8_t*>(&current_flight_),
                                        sizeof(FlightLogHeader) - sizeof(uint16_t));
 
@@ -112,11 +112,16 @@ bool FlashLogger::endFlightLog() {
         return false;
     }
 
-    file.seek(0);
-    file.write(reinterpret_cast<const uint8_t*>(&current_flight_), sizeof(FlightLogHeader));
+    const bool complete = file.seek(0) &&
+        file.write(reinterpret_cast<const uint8_t*>(&current_flight_),
+                   sizeof(FlightLogHeader)) == sizeof(FlightLogHeader);
     file.close();
 
     logging_active_ = false;
+    if (!complete) {
+        Serial.println("[FlashLogger] Flight log header write was incomplete");
+        return false;
+    }
     Serial.printf("[FlashLogger] Ended flight log, %d entries, %d bytes\n",
                   entry_count_, data_size_);
     return true;
@@ -170,7 +175,7 @@ bool FlashLogger::logFlightState(const VehicleState& state) {
         float altitude_agl;
         float vertical_speed;
         float distance_to_target;
-    } data;
+    } data{};
 
     data.flight_state = static_cast<uint8_t>(state.flight_state);
     data.guidance_mode = static_cast<uint8_t>(state.guidance_mode);
@@ -284,7 +289,7 @@ bool FlashLogger::readEntry(uint32_t index, LogEntry& entry) {
     }
 
     // Skip header
-    file.seek(sizeof(FlightLogHeader));
+    if (!file.seek(sizeof(FlightLogHeader))) return false;
 
     // Read entries until we reach the desired index
     for (uint32_t i = 0; i <= index; i++) {
@@ -293,14 +298,19 @@ bool FlashLogger::readEntry(uint32_t index, LogEntry& entry) {
             return false;
         }
 
-        file.read(reinterpret_cast<uint8_t*>(&entry.header), sizeof(LogEntryHeader));
-
-        if (file.available() < entry.header.length) {
+        if (file.read(reinterpret_cast<uint8_t*>(&entry.header), sizeof(LogEntryHeader)) !=
+                sizeof(LogEntryHeader) ||
+            entry.header.length > sizeof(entry.data) ||
+            file.available() < entry.header.length) {
             file.close();
             return false;
         }
 
-        file.read(entry.data, entry.header.length);
+        if (entry.header.length != 0 &&
+            file.read(entry.data, entry.header.length) != entry.header.length) {
+            file.close();
+            return false;
+        }
 
         if (i == index) {
             file.close();
@@ -362,10 +372,11 @@ bool FlashLogger::getFlightLogInfo(uint8_t index, FlightLogHeader& info) {
         if (filename.startsWith("/flight_")) {
             if (count == index) {
                 // Read header
-                file.read(reinterpret_cast<uint8_t*>(&info), sizeof(FlightLogHeader));
+                const bool complete = file.read(reinterpret_cast<uint8_t*>(&info),
+                                                sizeof(FlightLogHeader)) == sizeof(FlightLogHeader);
                 file.close();
                 root.close();
-                return true;
+                return complete;
             }
             count++;
         }
@@ -383,11 +394,13 @@ bool FlashLogger::writeEntry(const LogEntry& entry) {
         return false;
     }
 
-    file.write(reinterpret_cast<const uint8_t*>(&entry.header), sizeof(LogEntryHeader));
-    file.write(entry.data, entry.header.length);
+    const bool complete =
+        file.write(reinterpret_cast<const uint8_t*>(&entry.header), sizeof(LogEntryHeader)) ==
+            sizeof(LogEntryHeader) &&
+        (entry.header.length == 0 || file.write(entry.data, entry.header.length) == entry.header.length);
     file.close();
 
-    return true;
+    return complete;
 }
 
 uint16_t FlashLogger::calculateCRC(const uint8_t* data, size_t length) {

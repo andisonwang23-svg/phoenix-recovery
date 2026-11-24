@@ -34,10 +34,13 @@ struct GPSData {
 inline bool validateGPS(const GPSData& curr, const GPSData& prev,
                         const GPSQualityConfig& cfg) {
     if (!curr.valid) return false;
-    if (std::isnan(curr.lat) || std::isnan(curr.lon)) return false;
-    if (std::isnan(curr.speed_mps) || std::isnan(curr.course_deg)) return false;
+    if (!std::isfinite(curr.lat) || std::fabs(curr.lat) > 90.0 ||
+        !std::isfinite(curr.lon) || std::fabs(curr.lon) > 180.0) return false;
+    if (!std::isfinite(curr.speed_mps) || curr.speed_mps < 0.0f ||
+        !std::isfinite(curr.course_deg) || curr.course_deg < 0.0f ||
+        curr.course_deg > 360.0f) return false;
     if (curr.satellites < cfg.min_satellites) return false;
-    if (curr.hdop < cfg.min_hdop || curr.hdop > cfg.max_hdop) return false;
+    if (!std::isfinite(curr.hdop) || curr.hdop < cfg.min_hdop || curr.hdop > cfg.max_hdop) return false;
     if (curr.speed_mps > cfg.max_speed_mps) return false;
 
     if (prev.valid) {

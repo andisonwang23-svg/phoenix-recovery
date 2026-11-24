@@ -176,7 +176,69 @@ void target_acquisition_and_unreachable_target_are_conservatively_limited() {
     TEST_ASSERT_EQUAL((int)GuidedDropStatus::TARGET_ACQUISITION,
                       (int)out.status);
     TEST_ASSERT_FALSE(out.target_reachable);
-    TEST_ASSERT_LESS_OR_EQUAL(0.041f, out.left_brake + out.right_brake);
+    TEST_ASSERT_LESS_OR_EQUAL_FLOAT(0.041f, out.left_brake + out.right_brake);
+}
+
+void dropping_authority_bounds_an_existing_command() {
+    GuidedDropController controller(config());
+    reachGuidance(controller);
+    auto in = nominal(502);
+    controller.step(in);
+    in.now_ms = 602;
+    auto out = controller.step(in);
+    TEST_ASSERT_GREATER_THAN_FLOAT(0.08f, out.left_brake);
+
+    in.now_ms = 612;
+    in.dt_s = 0.01f;
+    in.altitude_agl_m = 9.0f;
+    out = controller.step(in);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::FINAL_APPROACH, (int)out.status);
+    TEST_ASSERT_LESS_OR_EQUAL_FLOAT(0.08001f, out.left_brake + out.right_brake);
+}
+
+void unreliable_course_cannot_complete_homing_confirmation() {
+    GuidedDropController controller(config());
+    reachGuidance(controller);
+    auto in = nominal(450);
+    in.gps_course_deg = 0.0f;
+    controller.step(in);
+    in.now_ms = 600;
+    in.ground_speed_mps = 0.2f;
+    auto out = controller.step(in);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::TARGET_ACQUISITION, (int)out.status);
+
+    in.now_ms = 750;
+    in.ground_speed_mps = 8.0f;
+    out = controller.step(in);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::TARGET_ACQUISITION, (int)out.status);
+    in.now_ms = 851;
+    out = controller.step(in);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::HOMING, (int)out.status);
+}
+
+void neutral_gate_restarts_the_command_ramp_from_zero() {
+    GuidedDropController controller(config());
+    reachGuidance(controller);
+    controller.step(nominal(502));
+    auto in = nominal(602);
+    in.canopy_event_observed = false;
+    TEST_ASSERT_TRUE(controller.step(in).neutral_required);
+
+    in.canopy_event_observed = true;
+    in.now_ms = 702;
+    TEST_ASSERT_TRUE(controller.step(in).neutral_required);
+    in.now_ms = 803;
+    const auto out = controller.step(in);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.05f, out.left_brake);
+}
+
+void invalid_course_is_rejected() {
+    GuidedDropController controller(config());
+    auto in = nominal(301);
+    in.gps_course_deg = 1e30f;
+    auto out = controller.step(in);
+    TEST_ASSERT_FALSE(out.gps_point_accepted);
+    TEST_ASSERT_TRUE(out.neutral_required);
 }
 
 void short_gps_loss_unwinds_then_latches_failsafe() {
@@ -279,7 +341,7 @@ void validated_imu_course_hold_is_bounded_and_optional() {
     auto out = controller.step(in);
     TEST_ASSERT_EQUAL((int)GuidedDropStatus::GPS_COURSE_HOLD, (int)out.status);
     TEST_ASSERT_TRUE(out.course_hold_active);
-    TEST_ASSERT_LESS_OR_EQUAL(0.051f, out.left_brake + out.right_brake);
+    TEST_ASSERT_LESS_OR_EQUAL_FLOAT(0.051f, out.left_brake + out.right_brake);
     in.now_ms = 701;
     out = controller.step(in);
     TEST_ASSERT_EQUAL((int)GuidedDropStatus::WAITING_NAVIGATION, (int)out.status);
@@ -294,8 +356,10 @@ void landing_or_abort_always_neutralizes() {
     TEST_ASSERT_EQUAL((int)GuidedDropStatus::LANDED, (int)out.status);
     TEST_ASSERT_TRUE(out.neutral_required);
     in.drop_state = DropTestState::TEST_ABORTED;
+    in.drop_recording = false;
     out = controller.step(in);
-    TEST_ASSERT_EQUAL((int)GuidedDropStatus::LANDED, (int)out.status);
+    TEST_ASSERT_EQUAL((int)GuidedDropStatus::FAULT_NEUTRAL, (int)out.status);
+    TEST_ASSERT_TRUE(out.neutral_required);
 }
 
 int main() {
@@ -307,6 +371,10 @@ int main() {
     RUN_TEST(guidance_produces_a_limited_nonzero_brake_command);
     RUN_TEST(published_return_phases_require_alignment_and_use_hysteresis);
     RUN_TEST(target_acquisition_and_unreachable_target_are_conservatively_limited);
+    RUN_TEST(dropping_authority_bounds_an_existing_command);
+    RUN_TEST(unreliable_course_cannot_complete_homing_confirmation);
+    RUN_TEST(neutral_gate_restarts_the_command_ramp_from_zero);
+    RUN_TEST(invalid_course_is_rejected);
     RUN_TEST(short_gps_loss_unwinds_then_latches_failsafe);
     RUN_TEST(critical_sensor_or_servo_fault_latches_neutral);
     RUN_TEST(persistent_instability_after_guidance_latches_neutral);

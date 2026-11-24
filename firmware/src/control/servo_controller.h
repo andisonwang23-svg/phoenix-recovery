@@ -75,9 +75,9 @@ public:
     float getLeftTurnDeg() const;
     float getRightTurnDeg() const;
 
-    // Get current commands
-    float getLeftCommand() const { return left_cmd_; }
-    float getRightCommand() const { return right_cmd_; }
+    // Get the normalized commands corresponding to the current PWM outputs.
+    float getLeftCommand() const { return usToCommand(last_left_written_us_, left_cal_); }
+    float getRightCommand() const { return usToCommand(last_right_written_us_, right_cal_); }
 
     // Check if healthy
     bool isHealthy() const { return initialized_ && left_attached_ && right_attached_; }
@@ -107,8 +107,6 @@ private:
 
     float left_us_ = 1500.0f;
     float right_us_ = 1500.0f;
-    float left_cmd_ = 0.0f;
-    float right_cmd_ = 0.0f;
 
     uint32_t last_update_ms_ = 0;
     uint32_t update_interval_ms_ = cfg::SERVO_REFRESH_MS;
@@ -121,7 +119,7 @@ private:
     bool servo1_controls_left_brake_ = true;
 
     float commandToUs(float cmd, const Calibration& cal);
-    float usToCommand(float us, const Calibration& cal);
+    float usToCommand(float us, const Calibration& cal) const;
     float usToAngleDeg(float us, const Calibration& cal) const;
     float usToTurnDeg(float us, const Calibration& cal) const;
     void setServoCommandsWithLimit(float servo1_cmd, float servo2_cmd,

@@ -20,9 +20,10 @@ constexpr double EARTH_RADIUS_M = 6371000.0;
 // Angle normalization to [-180, +180] degrees
 // ---------------------------------------------------------------------------
 inline double normalizeAngle(double angle_deg) {
-    while (angle_deg > 180.0) angle_deg -= 360.0;
-    while (angle_deg <= -180.0) angle_deg += 360.0;
-    return angle_deg;
+    const double wrapped = std::fmod(angle_deg, 360.0);
+    if (wrapped > 180.0) return wrapped - 360.0;
+    if (wrapped <= -180.0) return wrapped + 360.0;
+    return wrapped;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,8 @@ inline double distanceMeters(double lat1_deg, double lon1_deg,
                std::cos(lat1) * std::cos(lat2) *
                std::sin(dlon * 0.5) * std::sin(dlon * 0.5);
 
+    // Roundoff at antipodal points can put the intermediate slightly above 1.
+    if (a > 1.0) a = 1.0;
     double c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
     return EARTH_RADIUS_M * c;
 }

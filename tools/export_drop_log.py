@@ -120,7 +120,9 @@ def read_log(path: Path) -> tuple[dict, list[dict], list[dict], list[dict]]:
 
     header["parsed_entries"] = parsed
     header["log_closed_successfully"] = (
-        header["end_time_ms"] != 0 and parsed == header["entry_count"]
+        header["end_time_ms"] != 0
+        and parsed == header["entry_count"]
+        and offset == HEADER.size + header["data_size"] == len(data)
     )
     return header, telemetry, events, configs
 

@@ -2,6 +2,8 @@
 .pio/
 .vscode/
 .idea/
+__pycache__/
+/phoenix-baseline-*.bundle
 
 # PlatformIO / embedded build outputs
 *.elf

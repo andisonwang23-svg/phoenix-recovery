@@ -8,9 +8,8 @@ namespace logic {
 namespace {
 
 float normalized360(float degrees) {
-    while (degrees >= 360.0f) degrees -= 360.0f;
-    while (degrees < 0.0f) degrees += 360.0f;
-    return degrees;
+    const float wrapped = std::fmod(degrees, 360.0f);
+    return wrapped < 0.0f ? wrapped + 360.0f : wrapped;
 }
 
 float safeAuthority(float requested, float configured) {
@@ -79,8 +78,7 @@ bool GuidedDropController::validTarget(double latitude, double longitude) {
 
 bool GuidedDropController::landedState(DropTestState state) {
     return state == DropTestState::POST_LANDING ||
-           state == DropTestState::TEST_COMPLETE ||
-           state == DropTestState::TEST_ABORTED;
+           state == DropTestState::TEST_COMPLETE;
 }
 
 bool GuidedDropController::postReleaseState(DropTestState state) {
@@ -100,8 +98,8 @@ bool GuidedDropController::acceptGpsPoint(const GuidedDropInput& in) {
     const bool basic_valid = in.gps_valid &&
         in.gps_age_ms <= config_.sensor_max_age_ms &&
         validTarget(in.latitude, in.longitude) &&
-        std::isfinite(in.gps_course_deg) &&
-        std::isfinite(in.ground_speed_mps);
+        in.gps_course_deg >= 0.0f && in.gps_course_deg <= 360.0f &&
+        std::isfinite(in.ground_speed_mps) && in.ground_speed_mps >= 0.0f;
     if (!basic_valid) return false;
 
     if (have_accepted_position_) {
@@ -197,6 +195,8 @@ GuidedDropStatus GuidedDropController::updateReturnPhase(
 }
 
 GuidedDropOutput GuidedDropController::neutral(GuidedDropStatus status) {
+    rate_limiter_.reset();
+    resetReturnPhase();
     output_.status = status;
     output_.mode = status == GuidedDropStatus::FAULT_NEUTRAL
         ? GuidanceMode::MODE_FAILSAFE : GuidanceMode::MODE_DISABLED;
@@ -324,6 +324,10 @@ GuidedDropOutput GuidedDropController::step(const GuidedDropInput& in) {
         output_.authority = in.authority;
         return neutral(GuidedDropStatus::FEATURE_DISABLED);
     }
+    if (in.guided_test_requested && in.drop_state == DropTestState::TEST_ABORTED) {
+        fault_latched_ = true;
+        return neutral(GuidedDropStatus::FAULT_NEUTRAL);
+    }
     if (!in.guided_test_requested || !in.drop_recording) {
         if (request_was_active_) reset();
         request_was_active_ = in.guided_test_requested && in.drop_recording;
@@ -344,7 +348,7 @@ GuidedDropOutput GuidedDropController::step(const GuidedDropInput& in) {
         fault_latched_ = true;
         return neutral(GuidedDropStatus::FAULT_NEUTRAL);
     }
-    if (!sensorsFresh(in)) {
+    if (!sensorsFresh(in) || !std::isfinite(in.dt_s) || in.dt_s < 0.0f) {
         fault_latched_ = true;
         return neutral(GuidedDropStatus::FAULT_NEUTRAL);
     }
@@ -371,6 +375,8 @@ GuidedDropOutput GuidedDropController::step(const GuidedDropInput& in) {
     }
 
     if (in.angular_rate_dps > config_.neutral_angular_rate_dps) {
+        navigation_candidate_active_ = false;
+        resetReturnPhase();
         if (instability_since_ms_ == 0) instability_since_ms_ = in.now_ms;
         if (static_cast<uint32_t>(in.now_ms - instability_since_ms_) >=
             config_.instability_latch_ms) {
@@ -394,7 +400,7 @@ GuidedDropOutput GuidedDropController::step(const GuidedDropInput& in) {
                 navigation_loss_since_ms_ = in.now_ms;
             }
             const uint32_t loss_age = in.now_ms - navigation_loss_since_ms_;
-            if (config_.imu_course_hold_enabled && have_accepted_position_ &&
+            if (target_valid && config_.imu_course_hold_enabled && have_accepted_position_ &&
                 have_course_hold_reference_ && in.imu_valid &&
                 std::isfinite(in.imu_heading_deg) &&
                 loss_age <= config_.imu_course_hold_max_ms) {
@@ -442,9 +448,13 @@ GuidedDropOutput GuidedDropController::step(const GuidedDropInput& in) {
                                                 in.target_longitude);
     const float heading_error = headingErrorDegrees(in.gps_course_deg,
                                                     target_bearing);
-    const GuidedDropStatus return_phase = final_approach
-        ? GuidedDropStatus::FINAL_APPROACH
-        : updateReturnPhase(heading_error, in.now_ms);
+    const bool course_reliable = in.ground_speed_mps >= config_.guidance.min_course_speed_mps;
+    if (final_approach || !course_reliable) resetReturnPhase();
+    GuidedDropStatus return_phase = GuidedDropStatus::FINAL_APPROACH;
+    if (!final_approach) {
+        return_phase = course_reliable ? updateReturnPhase(heading_error, in.now_ms)
+                                       : GuidedDropStatus::TARGET_ACQUISITION;
+    }
     return runGuidance(in, in.latitude, in.longitude, in.gps_course_deg,
                        in.ground_speed_mps,
                        final_approach ? GuidanceMode::FINAL_APPROACH

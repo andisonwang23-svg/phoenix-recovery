@@ -205,7 +205,6 @@ public:
         int sign = (value > 0) ? 1 : (value < 0 ? -1 : 0);
 
         if (sign == 0) {
-            last_sign_ = 0;
             return true;
         }
 

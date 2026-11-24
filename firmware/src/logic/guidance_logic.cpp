@@ -12,14 +12,16 @@ GuidanceOutput computeGuidance(const GuidanceInput& in, const GuidanceConfig& cf
     out.active_mode = in.mode;
 
     // No guidance in disabled/failsafe modes
-    if (in.mode == GuidanceMode::MODE_DISABLED || in.mode == GuidanceMode::MODE_FAILSAFE) {
-        out.guidance_active = false;
-        out.steering_command = 0.0f;
+    if (in.mode == GuidanceMode::MODE_DISABLED || in.mode == GuidanceMode::MODE_FAILSAFE ||
+        !std::isfinite(in.dt_s) || in.dt_s < 0.0f ||
+        !std::isfinite(in.altitude_agl_m)) {
+        rate_limiter.reset();
         return out;
     }
 
     if (!in.gps_valid || !std::isfinite(in.current_lat) || !std::isfinite(in.current_lon) ||
-        !std::isfinite(in.gps_course_deg)) {
+        !std::isfinite(in.target_lat) || !std::isfinite(in.target_lon) ||
+        !std::isfinite(in.gps_course_deg) || !std::isfinite(in.ground_speed_mps)) {
         const float unwind = rate_limiter.update(0.0f, in.dt_s); // actively unwind an old hard turn
         out.guidance_active = false;
         out.steering_command = unwind;
@@ -28,8 +30,7 @@ GuidanceOutput computeGuidance(const GuidanceInput& in, const GuidanceConfig& cf
 
     // Below minimum guidance altitude - no steering
     if (in.altitude_agl_m < cfg.min_guidance_altitude_m) {
-        out.guidance_active = false;
-        out.steering_command = 0.0f;
+        rate_limiter.reset();
         return out;
     }
 
@@ -44,8 +45,7 @@ GuidanceOutput computeGuidance(const GuidanceInput& in, const GuidanceConfig& cf
 
     // Within target acceptance radius - reduce steering
     if (out.distance_to_target_m < cfg.target_accept_radius_m) {
-        out.guidance_active = false;
-        out.steering_command = 0.0f;
+        rate_limiter.reset();
         return out;
     }
 
@@ -56,7 +56,7 @@ GuidanceOutput computeGuidance(const GuidanceInput& in, const GuidanceConfig& cf
 
     if (in.mode == GuidanceMode::FINAL_APPROACH) {
         kp = cfg.final_approach_kp;
-        max_cmd = cfg.final_approach_max_command;
+        max_cmd = std::min(max_cmd, cfg.final_approach_max_command);
         deadband *= cfg.final_deadband_multiplier;
     } else if (in.mode == GuidanceMode::FLARE) {
         // Flare is symmetric brake, not differential steering
@@ -65,7 +65,8 @@ GuidanceOutput computeGuidance(const GuidanceInput& in, const GuidanceConfig& cf
     }
 
     if (!out.course_reliable) { max_cmd = std::min(max_cmd, cfg.low_speed_max_command); deadband *= cfg.low_speed_deadband_multiplier; }
-    if (in.imu_valid && in.angular_rate_dps > cfg.unstable_gyro_rate_dps) max_cmd = 0.0f;
+    if (in.imu_valid && (!std::isfinite(in.angular_rate_dps) ||
+                         in.angular_rate_dps > cfg.unstable_gyro_rate_dps)) max_cmd = 0.0f;
     else if (!in.imu_valid) max_cmd = std::min(max_cmd, cfg.missing_imu_max_command);
     if (!in.baro_valid) max_cmd = std::min(max_cmd, cfg.missing_baro_max_command);
     if (!out.target_reachable) max_cmd = std::min(max_cmd, cfg.unreachable_max_command);
@@ -78,7 +79,10 @@ GuidanceOutput computeGuidance(const GuidanceInput& in, const GuidanceConfig& cf
     float cmd = applyDeadbandAndClamp(raw_command, 0.0f, max_cmd);
     out.saturated = std::fabs(raw_command) > max_cmd && max_cmd > 0.0f;
 
-    // Rate limit
+    // A lowered safety limit takes effect immediately. Start the ramp from
+    // the bounded value so the next update cannot revive the old command.
+    const float bounded_previous = applyDeadbandAndClamp(rate_limiter.value(), 0.0f, max_cmd);
+    if (bounded_previous != rate_limiter.value()) rate_limiter.reset(bounded_previous);
     cmd = rate_limiter.update(cmd, in.dt_s);
 
     // Reversal guard

@@ -214,7 +214,7 @@ constexpr uint8_t LORA_SYNC_WORD = 0x12;
 constexpr uint32_t TELEMETRY_RATE_HZ = 2;
 constexpr uint32_t LORA_MIN_COMMAND_RX_WINDOW_MS = 250;
 constexpr uint32_t LOG_RATE_HZ = 10;
-constexpr uint32_t CONFIG_VERSION = 9; // published-return phase planner + reachability limits
+constexpr uint32_t CONFIG_VERSION = 10; // reviewed baseline with guidance limit fixes
 constexpr uint32_t MAIN_LOOP_INTERVAL_MS = 10; // 100 Hz main loop
 
 // ---------------------------------------------------------------------------

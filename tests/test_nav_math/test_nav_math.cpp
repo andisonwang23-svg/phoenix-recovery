@@ -191,6 +191,12 @@ void test_clamp_symmetric() {
 // Test Runner
 // ============================================================================
 
+void test_normalize_extreme_finite_angle() {
+    const double wrapped = logic::normalizeAngle(1e30);
+    TEST_ASSERT_TRUE(std::isfinite(wrapped));
+    TEST_ASSERT_TRUE(wrapped > -180.0 && wrapped <= 180.0);
+}
+
 int main() {
     UNITY_BEGIN();
 
@@ -217,6 +223,7 @@ int main() {
     RUN_TEST(test_normalize_angle_negative);
     RUN_TEST(test_normalize_angle_zero);
     RUN_TEST(test_normalize_angle_full_rotation);
+    RUN_TEST(test_normalize_extreme_finite_angle);
 
     // Wrap angle tests
     RUN_TEST(test_wrap_angle_270_to_negative);

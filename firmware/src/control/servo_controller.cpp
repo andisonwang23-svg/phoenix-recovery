@@ -150,6 +150,10 @@ void ServoController::setGuidedDropBrakeCommands(float left_cmd, float right_cmd
 void ServoController::setServoCommandsWithLimit(float left_cmd, float right_cmd,
                                                  float command_limit) {
     if (!initialized_) return;
+    if (!isfinite(left_cmd) || !isfinite(right_cmd) || !isfinite(command_limit)) {
+        emergencyNeutral();
+        return;
+    }
 
     command_limit = constrain(command_limit, 0.0f, 1.0f);
     left_cmd = constrain(left_cmd, -command_limit, command_limit);
@@ -157,29 +161,15 @@ void ServoController::setServoCommandsWithLimit(float left_cmd, float right_cmd,
     if (fabsf(left_cmd) < 0.005f) left_cmd = 0.0f;
     if (fabsf(right_cmd) < 0.005f) right_cmd = 0.0f;
 
-    left_cmd_ = left_cmd;
-    right_cmd_ = right_cmd;
-
     left_us_target_ = commandToUs(left_cmd, left_cal_);
     right_us_target_ = commandToUs(right_cmd, right_cal_);
 }
 
 void ServoController::setBenchServoCommands(float left_cmd, float right_cmd) {
-    if (!initialized_) return;
-
     // Bench commands have their own calibrated ceiling and never alter the
     // smaller autonomous-flight steering limit. Pulse-width calibration and
     // the physical min/max clamps still apply in commandToUs().
-    left_cmd = constrain(left_cmd, -cfg::LORA_BENCH_MAX_SERVO_COMMAND,
-                         cfg::LORA_BENCH_MAX_SERVO_COMMAND);
-    right_cmd = constrain(right_cmd, -cfg::LORA_BENCH_MAX_SERVO_COMMAND,
-                          cfg::LORA_BENCH_MAX_SERVO_COMMAND);
-    if (fabsf(left_cmd) < 0.005f) left_cmd = 0.0f;
-    if (fabsf(right_cmd) < 0.005f) right_cmd = 0.0f;
-    left_cmd_ = left_cmd;
-    right_cmd_ = right_cmd;
-    left_us_target_ = commandToUs(left_cmd, left_cal_);
-    right_us_target_ = commandToUs(right_cmd, right_cal_);
+    setServoCommandsWithLimit(left_cmd, right_cmd, cfg::LORA_BENCH_MAX_SERVO_COMMAND);
 }
 
 void ServoController::emergencyNeutral() {
@@ -187,9 +177,6 @@ void ServoController::emergencyNeutral() {
     right_us_ = right_cal_.neutral_us;
     left_us_target_ = left_cal_.neutral_us;
     right_us_target_ = right_cal_.neutral_us;
-    left_cmd_ = 0.0f;
-    right_cmd_ = 0.0f;
-
     if (left_attached_) {
         last_left_written_us_ = static_cast<int>(lroundf(left_us_));
         left_servo_.writeMicroseconds(last_left_written_us_);
@@ -255,7 +242,8 @@ float ServoController::commandToUs(float cmd, const Calibration& cal) {
     return us;
 }
 
-float ServoController::usToCommand(float us, const Calibration& cal) {
+float ServoController::usToCommand(float us, const Calibration& cal) const {
+    if (!initialized_ || cal.max_brake_us <= 0.0f) return 0.0f;
     float travel = us - cal.neutral_us;
     if (cal.reversed) travel = -travel;
     return travel / cal.max_brake_us;

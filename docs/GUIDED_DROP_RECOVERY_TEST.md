@@ -172,9 +172,8 @@ The native test suite covers:
 - immediate latched neutral on critical sensor/actuator failure;
 - neutral landing and abort behavior.
 
-The current host suite contains 131 passing controller/integration cases, and
-both payload and ground firmware compile successfully. This is software
-verification only, not authorization for an aerial test.
+See the [software baseline](SOFTWARE_BASELINE.md) for the tested Git tag,
+build commands, and verification scope.
 
 Passing host tests and successful firmware compilation are not evidence that a
 real parafoil will turn, remain stable, or reach the target. Those claims need
