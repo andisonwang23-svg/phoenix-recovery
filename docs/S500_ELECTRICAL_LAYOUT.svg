@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="754" viewBox="0 0 1280 754" role="img" aria-labelledby="title desc">
+  <title id="title">S500 quadcopter electrical layout</title>
+  <desc id="desc">Connector overview for a Pixhawk 6C, a Holybro PM02 V3 analog power module, a power distribution board, four separate ESCs and motors, an SBUS receiver, and a compatible GPS compass module. Battery power, the regulated flight controller connection, and control signals are shown separately.</desc>
+  <style>
+    text { font-family: 'Helvetica Neue', Arial, sans-serif; fill: #172a39; }
+    .title { font-size: 40px; font-weight: 700; }
+    .label { font-size: 22px; font-weight: 700; }
+    .body { font-size: 17px; }
+    .small { font-size: 15px; }
+    .muted { fill: #496279; }
+    .red { fill: #912e29; }
+    .green { fill: #23604d; }
+    .blue { fill: #1d5684; }
+    .card { fill: #fff; stroke: #b9c9d5; stroke-width: 1.5; }
+    .wire { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+  <rect width="1280" height="754" fill="#f3f7fa"/>
+  <text x="56" y="70" class="title">S500 quadcopter electrical layout</text>
+  <text x="58" y="107" class="body muted">Example with Pixhawk 6C, PM02 V3 analog power module, and four separate ESCs</text>
+
+  <!-- Main battery path. Red represents the paired positive and negative leads. -->
+  <path class="wire" stroke="#b64940" d="M238 194H310 M552 194H626 M866 194H977V296"/>
+  <text x="885" y="174" class="small red">Four battery branches</text>
+  <text x="995" y="258" class="small red">One + / − pair per ESC</text>
+  <rect x="56" y="152" width="182" height="84" rx="10" class="card"/>
+  <text x="75" y="188" class="label">Flight battery</text>
+  <text x="75" y="215" class="small muted">Pack positive / negative</text>
+  <rect x="310" y="152" width="242" height="84" rx="10" class="card"/>
+  <text x="329" y="188" class="label">PM02 V3</text>
+  <text x="329" y="215" class="small muted">Analog power module</text>
+  <rect x="626" y="152" width="240" height="84" rx="10" class="card"/>
+  <text x="646" y="188" class="label">Power distribution</text>
+  <text x="646" y="215" class="small muted">Current-rated PDB</text>
+
+  <!-- The regulator and analog sensing share the POWER1 harness. -->
+  <path class="wire" stroke="#347e65" d="M431 236V410"/>
+  <text x="448" y="314" class="body green">Regulated 5.2 V + ground</text>
+  <text x="448" y="337" class="small green">Battery voltage and current sense</text>
+
+  <!-- Low-current connections and bundled PWM signal / ground leads. -->
+  <path class="wire" stroke="#2874a3" d="M238 448H310 M238 549H310 M591 490H850V630H977V616"/>
+  <text x="610" y="465" class="body blue">I/O PWM OUT (MAIN)</text>
+  <text x="610" y="518" class="small blue">4 PWM outputs + signal ground</text>
+
+  <rect x="56" y="410" width="182" height="76" rx="10" class="card"/>
+  <text x="75" y="444" class="label">RC receiver</text>
+  <text x="75" y="467" class="small muted">SBUS example</text>
+  <rect x="56" y="511" width="182" height="76" rx="10" class="card"/>
+  <text x="75" y="545" class="label">GPS + compass</text>
+  <text x="75" y="568" class="small muted">Compatible module</text>
+
+  <rect x="310" y="410" width="281" height="177" rx="10" fill="#e9f2fc" stroke="#91afcc" stroke-width="1.5"/>
+  <text x="335" y="452" class="small blue">PPM/SBUS RC</text>
+  <text x="443" y="432" class="small green">POWER1</text>
+  <text x="397" y="494" class="label">Pixhawk 6C</text>
+  <text x="397" y="520" class="small muted">Flight controller</text>
+  <text x="335" y="554" class="small blue">GPS1</text>
+
+  <!-- Each ESC gets its own power branch and control signal. Each motor gets three phase leads. -->
+  <rect x="897" y="296" width="160" height="320" rx="10" fill="#eaf0f4" stroke="#aebfcd" stroke-width="1.5"/>
+  <text x="939" y="325" class="small muted" font-weight="700">ESC BANK</text>
+  <g stroke="#526b7d" stroke-width="2.2">
+    <path d="M1040 363H1131 M1040 368H1131 M1040 373H1131"/>
+    <path d="M1040 430H1131 M1040 435H1131 M1040 440H1131"/>
+    <path d="M1040 497H1131 M1040 502H1131 M1040 507H1131"/>
+    <path d="M1040 564H1131 M1040 569H1131 M1040 574H1131"/>
+  </g>
+  <text x="1068" y="325" class="small muted">3 phase leads</text>
+  <g class="card">
+    <rect x="914" y="345" width="126" height="46" rx="8"/>
+    <rect x="914" y="412" width="126" height="46" rx="8"/>
+    <rect x="914" y="479" width="126" height="46" rx="8"/>
+    <rect x="914" y="546" width="126" height="46" rx="8"/>
+    <rect x="1131" y="345" width="105" height="46" rx="8"/>
+    <rect x="1131" y="412" width="105" height="46" rx="8"/>
+    <rect x="1131" y="479" width="105" height="46" rx="8"/>
+    <rect x="1131" y="546" width="105" height="46" rx="8"/>
+  </g>
+  <g class="body" font-weight="600">
+    <text x="954" y="374">ESC 1</text>
+    <text x="954" y="441">ESC 2</text>
+    <text x="954" y="508">ESC 3</text>
+    <text x="954" y="575">ESC 4</text>
+    <text x="1153" y="374">Motor 1</text>
+    <text x="1153" y="441">Motor 2</text>
+    <text x="1153" y="508">Motor 3</text>
+    <text x="1153" y="575">Motor 4</text>
+  </g>
+
+  <path d="M56 651H1235" stroke="#c8d4de"/>
+  <g class="small">
+    <path class="wire" stroke="#b64940" d="M56 680H82"/><text x="92" y="685" class="red">Battery + / − pair</text>
+    <path class="wire" stroke="#347e65" d="M254 680H280"/><text x="290" y="685" class="green">Regulated power + sensing</text>
+    <path class="wire" stroke="#2874a3" d="M527 680H553"/><text x="563" y="685" class="blue">Control or sensor harness</text>
+    <text x="56" y="722" class="muted">Connector overview. Match motor positions to the flight-controller configuration and verify ESC-specific wiring.</text>
+  </g>
+</svg>
